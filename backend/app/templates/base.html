@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-50 scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Nutrify{% endblock %}</title>
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .page-atmosphere {
+            position: relative;
+            overflow: hidden;
+            isolation: isolate;
+            background: linear-gradient(180deg, #f4fbf6 0%, #f8fafc 56%, #f8fafc 100%);
+        }
+
+        .page-ray-grid {
+            position: absolute;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 12% 0%, rgba(134, 239, 172, 0.32) 0%, rgba(134, 239, 172, 0.12) 20%, transparent 42%),
+                radial-gradient(circle at 88% 10%, rgba(74, 222, 128, 0.22) 0%, rgba(74, 222, 128, 0.08) 22%, transparent 44%),
+                repeating-linear-gradient(118deg, rgba(34, 197, 94, 0.08) 0 1px, transparent 1px 28px);
+            mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.92) 0%, rgba(0, 0, 0, 0.46) 62%, transparent 100%);
+            opacity: 0.95;
+        }
+
+        .glow-orb {
+            position: absolute;
+            z-index: 0;
+            border-radius: 9999px;
+            pointer-events: none;
+            background: radial-gradient(circle, rgba(34, 197, 94, 0.28) 0%, rgba(34, 197, 94, 0.12) 36%, transparent 72%);
+            filter: blur(10px);
+        }
+
+        .glass-panel {
+            border: 1px solid rgba(255, 255, 255, 0.72);
+            background: rgba(255, 255, 255, 0.76);
+            backdrop-filter: blur(12px);
+            box-shadow: 0 18px 40px -28px rgba(15, 23, 42, 0.4);
+        }
+
+        .surface-panel {
+            border: 1px solid #e5e7eb;
+            background: #ffffff;
+            box-shadow: 0 20px 40px -32px rgba(15, 23, 42, 0.32);
+        }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="h-full flex flex-col">
+
+    <nav class="bg-white/90 backdrop-blur-lg shadow-sm sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex-shrink-0 flex items-center">
+                    <a href="{{ url_for('main.dashboard') if current_user.is_authenticated else url_for('main.index') }}" class="flex items-center space-x-2">
+                       <img src="{{ url_for('static', filename='nutrify-logo.png') }}" alt="Nutrify Logo" class="h-8 w-auto">                        <span class="text-2xl font-bold text-gray-800">Nutrify</span>
+                    </a>
+                </div>
+                <div class="flex items-center space-x-2">
+                    {% if current_user.is_authenticated %}
+                        <!-- Links for LOGGED-IN users -->
+                        <a href="{{ url_for('main.dashboard') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_dashboard %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Dashboard</a>
+                        
+                        {% if current_user.role == 'school' %}
+                            <a href="{{ url_for('main.insights') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_insights %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Insights</a>
+                        {% elif current_user.role == 'student' %}
+                            <a href="{{ url_for('main.meal_generator') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_meal %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Meal Plan</a>
+                            <a href="{{ url_for('main.health_form') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_health %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Health Form</a>
+                            <a href="{{ url_for('main.awareness_page') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_awareness %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Health Awareness</a>
+                        {% endif %}
+                        
+                        <form action="{{ url_for('main.logout') }}" method="POST" class="ml-2 inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="px-3 py-2 rounded-md text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-colors shadow-sm">Logout</button>
+                        </form>
+                    {% else %}
+                        <!-- Links for LOGGED-OUT users -->
+                        <a href="{{ url_for('main.index') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_home %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Home</a>
+                        <a href="{{ url_for('main.login') }}" class="ml-2 px-3 py-2 rounded-md text-sm font-medium {% block nav_login %}text-white bg-green-600 hover:bg-green-700 transition-colors shadow-sm{% endblock %}">Login</a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </nav>
+    
+    <main class="flex-grow">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="mt-auto border-t border-emerald-100/80 bg-gradient-to-r from-white via-emerald-50/70 to-white">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-center">
+            <p class="text-sm font-medium text-slate-500">
+                &copy; 2026 Nutrify. All Rights Reserved.
+            </p>
+        </div>
+    </footer>
+
+    <script>
+        window.Nutrify = window.Nutrify || {};
+        window.Nutrify.csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+        window.getCsrfToken = function() {
+            return window.Nutrify.csrfToken || '';
+        };
+
+        function injectCsrfToken(form) {
+            if (!form || !form.method || form.method.toUpperCase() !== 'POST' || form.querySelector('input[name="csrf_token"]')) {
+                return;
+            }
+
+            const token = window.getCsrfToken();
+            if (!token) {
+                return;
+            }
+
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'csrf_token';
+            input.value = token;
+            form.appendChild(input);
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('form').forEach(injectCsrfToken);
+
+            const flashMessages = document.querySelectorAll('.flash-message');
+            flashMessages.forEach(function(message) {
+                setTimeout(function() {
+                    message.classList.add('transition', 'duration-500', 'ease-out', 'opacity-0');
+                    setTimeout(function() {
+                        message.style.display = 'none';
+                    }, 500);
+                }, 3000);
+            });
+        });
+
+        document.addEventListener('submit', function(event) {
+            injectCsrfToken(event.target);
+        }, true);
+    </script>
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

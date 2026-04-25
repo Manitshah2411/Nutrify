@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+
+{% block title %}Student Dashboard - Nutrify{% endblock %}
+
+{% block nav_dashboard %}bg-green-50 text-green-700 shadow-sm ring-1 ring-green-100 transition-colors{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+{% endblock %}
+
+{% block content %}
+{% set todays_item_count = todays_plan.items|length if todays_plan and todays_plan.items else 0 %}
+
+<section class="page-atmosphere border-b border-gray-200">
+    <div class="page-ray-grid"></div>
+    <div class="glow-orb left-[-7rem] top-[-6rem] h-72 w-72"></div>
+    <div class="glow-orb right-[-5rem] top-[-4rem] h-80 w-80"></div>
+    <div class="relative max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
+        {% include "_flash_messages.html" %}
+
+        <div class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-end">
+            <div>
+                <p class="text-sm font-semibold uppercase tracking-[0.18em] text-green-700">Student Dashboard</p>
+                <h1 class="mt-3 text-4xl font-extrabold tracking-tight text-gray-900 sm:text-5xl">Welcome back, {{ current_user.student_detail.full_name }}.</h1>
+                <p class="mt-4 max-w-2xl text-base leading-7 text-gray-600 sm:text-lg">
+                    Track today&apos;s meals, review your nutrition trends, and keep your school health data in one clear workspace.
+                </p>
+                <div class="mt-6 grid gap-4 sm:grid-cols-3">
+                    <div class="glass-panel rounded-2xl p-4">
+                        <p class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">Today&apos;s Plan</p>
+                        <p class="mt-2 text-2xl font-bold text-gray-900">{{ todays_item_count }}</p>
+                        <p class="mt-1 text-sm text-gray-600">Planned menu items</p>
+                    </div>
+                    <div class="glass-panel rounded-2xl p-4">
+                        <p class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">Attendance</p>
+                        <p class="mt-2 text-2xl font-bold text-gray-900">{{ attendance_percentage }}%</p>
+                        <p class="mt-1 text-sm text-gray-600">Current recorded attendance</p>
+                    </div>
+                    <div class="glass-panel rounded-2xl p-4">
+                        <p class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">BMI</p>
+                        <p class="mt-2 text-2xl font-bold text-gray-900">{% if current_user.student_detail.bmi %}{{ "%.1f"|format(current_user.student_detail.bmi) }}{% else %}N/A{% endif %}</p>
+                        <p class="mt-1 text-sm text-gray-600">Latest calculated value</p>
+                    </div>
+                </div>
+            </div>
+            <div class="glass-panel rounded-3xl p-5">
+                <label for="historyDate" class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">View History</label>
+                <p class="mt-2 text-sm leading-6 text-gray-600">Select a previous date to review the meal plan and nutrition details for that day.</p>
+                <input type="date" id="historyDate" class="mt-4 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500" value="{{ today.strftime('%Y-%m-%d') }}" max="{{ today.strftime('%Y-%m-%d') }}">
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div id="mealPlanSection" class="surface-panel rounded-3xl p-6">
+            <h2 class="text-2xl font-bold text-gray-800">Meal Plan <span class="text-gray-500 text-lg font-normal" id="selectedDateHeader">({{ today.strftime('%d %B, %Y') }})</span></h2>
+            <div id="mealPlanContent" class="mt-5 space-y-4">
+                {% if todays_plan and todays_plan.items %}
+                    <div class="rounded-2xl border border-gray-200 bg-gray-50/80 p-4"><h3 class="text-lg font-semibold text-green-700">Breakfast</h3><ul class="mt-2 list-disc list-inside text-gray-700">{% for item in todays_plan.items if item.meal_type == 'Breakfast' %}<li>{{ item.food.name }} ({{ item.food.calories }} kcal)</li>{% else %}<li>No breakfast items planned.</li>{% endfor %}</ul></div>
+                    <div class="rounded-2xl border border-gray-200 bg-gray-50/80 p-4"><h3 class="text-lg font-semibold text-green-700">Lunch</h3><ul class="mt-2 list-disc list-inside text-gray-700">{% for item in todays_plan.items if item.meal_type == 'Lunch' %}<li>{{ item.food.name }} ({{ item.food.calories }} kcal)</li>{% else %}<li>No lunch items planned.</li>{% endfor %}</ul></div>
+                    <div class="rounded-2xl border border-gray-200 bg-gray-50/80 p-4"><h3 class="text-lg font-semibold text-green-700">Dinner</h3><ul class="mt-2 list-disc list-inside text-gray-700">{% for item in todays_plan.items if item.meal_type == 'Dinner' %}<li>{{ item.food.name }} ({{ item.food.calories }} kcal)</li>{% else %}<li>No dinner items planned.</li>{% endfor %}</ul></div>
+                {% else %}
+                    <div class="rounded-2xl border border-yellow-200 bg-yellow-50 p-4 text-center"><p class="font-medium text-yellow-800">No meal plan available for this date.</p></div>
+                {% endif %}
+            </div>
+
+            <div class="mt-8 surface-panel rounded-3xl p-6">
+                <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                    <div class="flex items-center space-x-4">
+                        <div class="flex-shrink-0 rounded-full bg-green-100 p-3 text-green-600">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-xl font-semibold text-gray-800">Personal Health Analysis</h3>
+                            <p class="mt-1 text-sm text-gray-500">Generate a structured health report with recommendations based on your latest data.</p>
+                        </div>
+                    </div>
+                    <a href="{{ url_for('main.health_form') }}" class="inline-flex items-center justify-center rounded-xl bg-green-600 px-5 py-2.5 font-semibold text-white shadow-sm transition hover:bg-green-700">
+                        Generate My Report
+                    </a>
+                </div>
+            </div>
+
+            <div class="mt-6 surface-panel rounded-3xl p-6">
+                <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                    <div class="flex items-center space-x-4">
+                        <div class="flex-shrink-0 rounded-full bg-blue-100 p-3 text-blue-600">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 1.567-3 3.5S10.343 15 12 15s3-1.567 3-3.5S13.657 8 12 8z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2m0 14v2m3.464-19.536l-1.414 1.414M8.95 8.05l-1.414 1.414M21 12h-2M5 12H3m16.536 3.464l-1.414-1.414M8.05 15.95l-1.414-1.414" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-xl font-semibold text-gray-800">Personalized Meal Plans</h3>
+                            <p class="mt-1 text-sm text-gray-500">Create a tailored plan around your preferences, routine, and nutrition needs.</p>
+                        </div>
+                    </div>
+                    <a href="{{ url_for('main.meal_generator') }}" class="inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 font-semibold text-white shadow-sm transition hover:bg-blue-700">
+                        Get My Plan
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <div class="space-y-6">
+            <div id="nutritionSummarySection" class="surface-panel rounded-3xl p-6">
+                <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                    <div class="rounded-2xl bg-green-50 p-3 text-center"><p class="text-sm font-medium text-gray-500">Calories</p><p class="text-lg font-bold text-green-600" id="stat-calories">{{ daily_nutrition.calories }}/{{ recommended_values.calories }}</p><div class="mt-1 h-1 rounded-full bg-gray-200"><div id="bar-calories" class="h-1 rounded-full bg-green-500" style="width: {{ nutrition_percentages.calories }}%"></div></div></div>
+                    <div class="rounded-2xl bg-blue-50 p-3 text-center"><p class="text-sm font-medium text-gray-500">Protein</p><p class="text-lg font-bold text-blue-600" id="stat-protein">{{ daily_nutrition.protein }}/{{ recommended_values.protein }}g</p><div class="mt-1 h-1 rounded-full bg-gray-200"><div id="bar-protein" class="h-1 rounded-full bg-blue-500" style="width: {{ nutrition_percentages.protein }}%"></div></div></div>
+                    <div class="rounded-2xl bg-yellow-50 p-3 text-center"><p class="text-sm font-medium text-gray-500">Carbs</p><p class="text-lg font-bold text-yellow-600" id="stat-carbs">{{ daily_nutrition.carbs }}/{{ recommended_values.carbs }}g</p><div class="mt-1 h-1 rounded-full bg-gray-200"><div id="bar-carbs" class="h-1 rounded-full bg-yellow-500" style="width: {{ nutrition_percentages.carbs }}%"></div></div></div>
+                    <div class="rounded-2xl bg-red-50 p-3 text-center"><p class="text-sm font-medium text-gray-500">Fats</p><p class="text-lg font-bold text-red-600" id="stat-fats">{{ daily_nutrition.fats }}/{{ recommended_values.fats }}g</p><div class="mt-1 h-1 rounded-full bg-gray-200"><div id="bar-fats" class="h-1 rounded-full bg-red-500" style="width: {{ nutrition_percentages.fats }}%"></div></div></div>
+                </div>
+            </div>
+
+            <div class="surface-panel rounded-3xl p-6">
+                <h2 class="text-lg font-semibold text-gray-800 mb-4">Weekly Nutrition Trend</h2>
+                <canvas id="weeklyTrendChart" height="150"></canvas>
+            </div>
+
+            <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                <div class="surface-panel rounded-3xl p-6">
+                    <h2 class="text-lg font-semibold text-gray-800 mb-4">Daily Nutrition Mix</h2>
+                    <canvas id="nutritionChart" height="150"></canvas>
+                </div>
+                <div class="surface-panel rounded-3xl p-6">
+                    <h2 class="text-lg font-semibold text-gray-800 mb-4">Calories by Meal</h2>
+                    <canvas id="mealDistributionChart" height="150"></canvas>
+                </div>
+            </div>
+
+            <div class="surface-panel rounded-3xl p-6">
+                <h2 class="text-lg font-semibold text-gray-800 mb-4">Health Stats</h2>
+                <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                    <div><p class="text-sm text-gray-500">Age</p><p class="text-lg font-semibold">{{ current_user.student_detail.age }} years</p></div>
+                    <div><p class="text-sm text-gray-500">Height</p><p class="text-lg font-semibold">{{ current_user.student_detail.latest_height or 'N/A' }} cm</p></div>
+                    <div><p class="text-sm text-gray-500">Weight</p><p class="text-lg font-semibold">{{ current_user.student_detail.latest_weight or 'N/A' }} kg</p></div>
+                    <div><p class="text-sm text-gray-500">BMI</p><p class="text-lg font-semibold">{% if current_user.student_detail.bmi %}{{ "%.1f"|format(current_user.student_detail.bmi) }}{% else %}N/A{% endif %}</p></div>
+                </div>
+            </div>
+
+            <div class="surface-panel rounded-3xl p-6">
+                <div class="mb-4 flex items-center justify-between">
+                    <h2 class="text-lg font-semibold text-gray-800">Attendance</h2>
+                    <span class="text-lg font-bold text-green-600">{{ attendance_percentage }}%</span>
+                </div>
+                <div class="text-sm text-gray-600">
+                    <h4 class="mb-2 font-medium">Recent Absences:</h4>
+                    <ul class="space-y-1">
+                        {% if recent_absences %}
+                            {% for record in recent_absences %}
+                                <li>{{ record.attendance_date.strftime('%d %B, %Y') }}</li>
+                            {% endfor %}
+                        {% else %}
+                            <li>No recent absences.</li>
+                        {% endif %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        Chart.register(ChartDataLabels);
+
+        let weeklyTrendChart, nutritionChart, mealDistributionChart;
+
+        function createWeeklyTrendChart(weeklyData) {
+            const ctx = document.getElementById('weeklyTrendChart').getContext('2d');
+            return new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: weeklyData.map(d => d.day),
+                    datasets: [{
+                        label: 'Calories',
+                        data: weeklyData.map(d => d.calories),
+                        borderColor: 'rgb(34, 197, 94)',
+                        tension: 0.1
+                    }]
+                },
+                options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+            });
+        }
+
+        function createNutritionChart(dailyData) {
+            const ctx = document.getElementById('nutritionChart').getContext('2d');
+            return new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Protein (g)', 'Carbs (g)', 'Fats (g)'],
+                    datasets: [{
+                        data: [dailyData.protein, dailyData.carbs, dailyData.fats],
+                        backgroundColor: ['rgb(59, 130, 246)', 'rgb(234, 179, 8)', 'rgb(239, 68, 68)']
+                    }]
+                },
+                options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
+            });
+        }
+
+        function createMealDistributionChart(mealTotals) {
+            const ctx = document.getElementById('mealDistributionChart').getContext('2d');
+            return new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Breakfast', 'Lunch', 'Dinner'],
+                    datasets: [{
+                        label: 'Calories',
+                        data: [mealTotals.Breakfast.calories, mealTotals.Lunch.calories, mealTotals.Dinner.calories],
+                        backgroundColor: 'rgb(34, 197, 94)'
+                    }]
+                },
+                options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+            });
+        }
+
+        weeklyTrendChart = createWeeklyTrendChart({{ weekly_nutrition | tojson }});
+        nutritionChart = createNutritionChart({{ daily_nutrition | tojson }});
+        mealDistributionChart = createMealDistributionChart({{ meal_type_totals | tojson }});
+
+        function updateNutritionStats(nutrition, recommended, percentages) {
+            document.getElementById('stat-calories').textContent = `${nutrition.calories}/${recommended.calories}`;
+            document.getElementById('bar-calories').style.width = `${percentages.calories}%`;
+            document.getElementById('stat-protein').textContent = `${nutrition.protein}/${recommended.protein}g`;
+            document.getElementById('bar-protein').style.width = `${percentages.protein}%`;
+            document.getElementById('stat-carbs').textContent = `${nutrition.carbs}/${recommended.carbs}g`;
+            document.getElementById('bar-carbs').style.width = `${percentages.carbs}%`;
+            document.getElementById('stat-fats').textContent = `${nutrition.fats}/${recommended.fats}g`;
+            document.getElementById('bar-fats').style.width = `${percentages.fats}%`;
+        }
+
+        function updateCharts(dailyData, mealTotals, weeklyData) {
+            nutritionChart.data.datasets[0].data = [dailyData.protein, dailyData.carbs, dailyData.fats];
+            nutritionChart.update();
+
+            mealDistributionChart.data.datasets[0].data = [mealTotals.Breakfast.calories, mealTotals.Lunch.calories, mealTotals.Dinner.calories];
+            mealDistributionChart.update();
+
+            weeklyTrendChart.data.labels = weeklyData.map(d => d.day);
+            weeklyTrendChart.data.datasets[0].data = weeklyData.map(d => d.calories);
+            weeklyTrendChart.update();
+        }
+
+        function updateMealPlan(plan) {
+            const container = document.getElementById('mealPlanContent');
+            container.innerHTML = '';
+
+            if (plan) {
+                const mealTypes = ['Breakfast', 'Lunch', 'Dinner'];
+                mealTypes.forEach(mealType => {
+                    const items = plan[mealType];
+                    const itemsHtml = items.length > 0
+                        ? items.map(item => `<li>${item}</li>`).join('')
+                        : `<li>No ${mealType.toLowerCase()} items planned.</li>`;
+
+                    container.innerHTML += `
+                        <div class="rounded-2xl border border-gray-200 bg-gray-50/80 p-4">
+                            <h3 class="text-lg font-semibold text-green-700">${mealType}</h3>
+                            <ul class="mt-2 list-disc list-inside text-gray-700">${itemsHtml}</ul>
+                        </div>
+                    `;
+                });
+            } else {
+                container.innerHTML = `<div class="rounded-2xl border border-yellow-200 bg-yellow-50 p-4 text-center"><p class="font-medium text-yellow-800">No meal plan available for this date.</p></div>`;
+            }
+        }
+
+        document.getElementById('historyDate').addEventListener('change', function(e) {
+            const selectedDate = e.target.value;
+            fetch(`/get-nutrition-data/${selectedDate}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const dateObj = new Date(selectedDate + 'T00:00:00');
+                    document.getElementById('selectedDateHeader').textContent = `(${dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })})`;
+
+                    updateNutritionStats(data.daily_nutrition, data.recommended_values, data.nutrition_percentages);
+                    updateCharts(data.daily_nutrition, data.meal_type_totals, data.weekly_nutrition);
+                    updateMealPlan(data.meal_plan);
+                })
+                .catch(() => {
+                    document.getElementById('mealPlanContent').innerHTML = `<div class="rounded-2xl border border-red-200 bg-red-50 p-4 text-center"><p class="font-medium text-red-800">Could not load data for the selected date.</p></div>`;
+                });
+        });
+    });
+    </script>
+{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block title %}{{ error_title }} - Nutrify{% endblock %}
+
+{% block content %}
+<section class="page-atmosphere min-h-[70vh]">
+    <div class="page-ray-grid"></div>
+    <div class="relative mx-auto flex max-w-4xl flex-col items-center px-4 py-20 text-center sm:px-6 lg:px-8">
+        <div class="glass-panel w-full rounded-3xl px-6 py-12 sm:px-10 sm:py-14">
+            <p class="text-sm font-semibold uppercase tracking-[0.2em] text-green-700">Error {{ error_code }}</p>
+            <h1 class="mt-4 text-4xl font-extrabold tracking-tight text-gray-900 sm:text-5xl">{{ error_title }}</h1>
+            <p class="mx-auto mt-4 max-w-2xl text-base leading-7 text-gray-600 sm:text-lg">{{ error_message }}</p>
+            <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
+                <a href="{{ url_for('main.dashboard') if current_user.is_authenticated else url_for('main.index') }}" class="inline-flex items-center justify-center rounded-xl bg-green-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700">
+                    {% if current_user.is_authenticated %}Back to dashboard{% else %}Back home{% endif %}
+                </a>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

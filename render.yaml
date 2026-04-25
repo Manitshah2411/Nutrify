@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: nutrify-web
+    runtime: python
+    rootDir: backend
+    plan: starter
+    autoDeployTrigger: checksPass
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    preDeployCommand: ./bin/render_predeploy.sh
+    startCommand: gunicorn -c gunicorn.conf.py wsgi:application
+    healthCheckPath: /health
+    maxShutdownDelaySeconds: 45
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nutrify-postgres
+          property: connectionString
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: ENABLE_PROXY_FIX
+        value: "1"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: GEMINI_MODEL_NAME
+        value: gemini-2.5-flash
+      - key: GUNICORN_TIMEOUT
+        value: "120"
+      - key: DEFAULT_SCHOOL_USERNAME
+        value: BestSchool
+      - key: DEFAULT_SCHOOL_NAME
+        value: The Best School
+      - key: DEFAULT_SCHOOL_PASSWORD
+        generateValue: true
+      - key: SHOW_DEMO_CREDENTIALS
+        value: "0"
+
+databases:
+  - name: nutrify-postgres
+    databaseName: nutrify
+    user: nutrify
+    plan: basic-256mb
+    postgresMajorVersion: "17"
+    storageAutoscalingEnabled: true

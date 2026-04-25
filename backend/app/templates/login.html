@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}Login - Nutrify{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+    
+    <div class="w-full max-w-4xl bg-white rounded-2xl shadow-2xl overflow-hidden grid grid-cols-1 md:grid-cols-2">
+        
+        <div class="relative hidden md:block">
+            <img class="absolute inset-0 h-full w-full object-cover" src="{{ url_for('static', filename='login-bg.png') }}" alt="Children eating healthy food">
+            <div class="absolute inset-0 bg-green-800 bg-opacity-20"></div>
+        </div>
+
+        <div class="flex flex-col justify-center p-8 sm:p-12">
+            <div class="w-full max-w-md mx-auto">
+                <div class="text-center">
+                    <h2 class="text-2xl font-bold text-gray-900">Sign in to your account</h2>
+                    <p class="mt-2 text-sm text-gray-600">Please use your provided credentials.</p>
+                </div>
+
+                <div class="mt-6">
+                    {% include '_flash_messages.html' %}
+                </div>
+
+                <div class="mt-8">
+                    <form action="{{ url_for('main.login') }}" method="POST" class="space-y-6">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div>
+                            <label for="username" class="block text-sm font-medium text-gray-700">Username</label>
+                            <div class="mt-1">
+                                <input id="username" name="username" type="text" required class="appearance-none block w-full px-3 py-3 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label for="password" class="block text-sm font-medium text-gray-700">Password</label>
+                            <div class="mt-1">
+                                <input id="password" name="password" type="password" required class="appearance-none block w-full px-3 py-3 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm">
+                            </div>
+                        </div>
+
+                        <div>
+                            <button type="submit" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors">
+                                Sign in
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                {% if show_demo_credentials %}
+                <div class="mt-10">
+                    <div class="relative"><div class="absolute inset-0 flex items-center"><div class="w-full border-t border-gray-300"></div></div><div class="relative flex justify-center text-sm"><span class="px-2 bg-white text-gray-500">Demo Account</span></div></div>
+                    <div class="mt-6 space-y-4 text-center">
+                        <p class="text-sm text-gray-600"><span class="font-semibold">School:</span> {{ default_school_username }} | <span class="font-semibold">Pass:</span> school123</p>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

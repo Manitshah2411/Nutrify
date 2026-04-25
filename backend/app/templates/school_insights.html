@@ -1,0 +1,447 @@
+{% extends "base.html" %}
+
+{% block title %}School Insights Dashboard{% endblock %}
+
+{% block nav_insights %}bg-green-50 text-green-700 shadow-sm ring-1 ring-green-100 transition-colors{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    .insight-table thead th {
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #6b7280;
+    }
+
+    .insight-table tbody tr {
+        transition: background-color 0.2s ease;
+    }
+
+    .insight-table tbody tr:hover {
+        background-color: #f8fafc;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+{% set school_name = current_user.school_name if current_user.is_authenticated else "your school" %}
+{% set strongest_class = (class_insights|sort(attribute='avg_attendance', reverse=True)|first) if class_insights else none %}
+{% set best_nutrition_class = (class_insights|sort(attribute='avg_nutrition_score', reverse=True)|first) if class_insights else none %}
+
+<section class="page-atmosphere border-b border-gray-200">
+    <div class="page-ray-grid"></div>
+    <div class="glow-orb left-[-7rem] top-[-5rem] h-72 w-72"></div>
+    <div class="glow-orb right-[-4rem] top-[-6rem] h-80 w-80"></div>
+    <div class="relative max-w-7xl mx-auto px-4 py-10 sm:px-6 lg:px-8">
+        <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-end">
+            <div class="max-w-3xl">
+                <p class="text-sm font-semibold uppercase tracking-[0.18em] text-green-700">School Insights</p>
+                <h1 class="mt-3 text-4xl font-extrabold tracking-tight text-gray-900 sm:text-5xl">A clearer operating view for {{ school_name }}.</h1>
+                <p class="mt-4 max-w-2xl text-base leading-7 text-gray-600 sm:text-lg">
+                    Monitor attendance, meal participation, and nutrition performance from one organized dashboard built for quick review and confident decisions.
+                </p>
+            </div>
+
+            <div class="glass-panel rounded-3xl p-6">
+                <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Reporting Snapshot</p>
+                <div class="mt-5 space-y-4">
+                    <div class="flex items-center justify-between gap-4">
+                        <div>
+                            <p class="text-sm font-semibold text-gray-900">Window</p>
+                            <p class="mt-1 text-sm text-gray-600">Last 7 days and current month</p>
+                        </div>
+                        <span class="rounded-full bg-white px-3 py-1 text-sm font-semibold text-gray-900 shadow-sm">Live</span>
+                    </div>
+                    <div class="flex items-center justify-between gap-4">
+                        <div>
+                            <p class="text-sm font-semibold text-gray-900">Grades tracked</p>
+                            <p class="mt-1 text-sm text-gray-600">Attendance and nutrition monitoring</p>
+                        </div>
+                        <span class="rounded-full bg-white px-3 py-1 text-sm font-semibold text-gray-900 shadow-sm">{{ nutrition_compliance_labels|length }}</span>
+                    </div>
+                    <div class="flex items-center justify-between gap-4">
+                        <div>
+                            <p class="text-sm font-semibold text-gray-900">Impact metrics</p>
+                            <p class="mt-1 text-sm text-gray-600">Program and class summaries</p>
+                        </div>
+                        <span class="rounded-full bg-white px-3 py-1 text-sm font-semibold text-gray-900 shadow-sm">{{ health_impact_data|length }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div class="glass-panel rounded-2xl p-5">
+                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">Total Students</p>
+                <div class="mt-3 flex items-end justify-between gap-4">
+                    <p class="text-4xl font-bold text-gray-900">{{ total_students }}</p>
+                    <div class="rounded-2xl bg-green-50 p-3 text-green-700 ring-1 ring-green-100">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5V4H2v16h5m10 0v-2a4 4 0 00-4-4H11a4 4 0 00-4 4v2m10 0H7m10-8a4 4 0 11-8 0 4 4 0 018 0z" />
+                        </svg>
+                    </div>
+                </div>
+                <p class="mt-2 text-sm text-gray-600">Active students in the school roster</p>
+            </div>
+
+            <div class="glass-panel rounded-2xl p-5">
+                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">Attendance Today</p>
+                <div class="mt-3 flex items-end justify-between gap-4">
+                    <p class="text-4xl font-bold {% if attendance_today_percent >= 80 %}text-green-600{% elif attendance_today_percent >= 50 %}text-amber-600{% else %}text-red-500{% endif %}">{{ attendance_today_percent }}%</p>
+                    <div class="rounded-2xl bg-white p-3 shadow-sm">
+                        <div class="h-2 w-16 overflow-hidden rounded-full bg-gray-200">
+                            <div class="h-2 rounded-full bg-green-500" style="width: {{ attendance_today_percent }}%"></div>
+                        </div>
+                    </div>
+                </div>
+                <p class="mt-2 text-sm text-gray-600">Students marked present through meal attendance</p>
+            </div>
+
+            <div class="glass-panel rounded-2xl p-5">
+                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">Avg. Weekly Attendance</p>
+                <div class="mt-3 flex items-end justify-between gap-4">
+                    <p class="text-4xl font-bold text-gray-900">{{ avg_weekly_attendance_percent }}%</p>
+                    <div class="rounded-2xl bg-blue-50 p-3 text-blue-700 ring-1 ring-blue-100">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7 14l3-3 3 2 4-6" />
+                        </svg>
+                    </div>
+                </div>
+                <p class="mt-2 text-sm text-gray-600">Rolling average across the last seven days</p>
+            </div>
+
+            <div class="glass-panel rounded-2xl p-5">
+                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">Meals Served This Month</p>
+                <div class="mt-3 flex items-end justify-between gap-4">
+                    <p class="text-4xl font-bold text-gray-900">{{ total_meals_this_month }}</p>
+                    <div class="rounded-2xl bg-orange-50 p-3 text-orange-700 ring-1 ring-orange-100">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 3h1l2 12h10l2-8H7m1 13a1 1 0 100 2 1 1 0 000-2zm9 0a1 1 0 100 2 1 1 0 000-2z" />
+                        </svg>
+                    </div>
+                </div>
+                <p class="mt-2 text-sm text-gray-600">Breakfast, lunch, and dinner participation combined</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+    <section class="grid gap-6 xl:grid-cols-3">
+        <div class="surface-panel rounded-3xl p-6">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Attendance Trend</p>
+                    <h2 class="mt-2 text-2xl font-bold text-gray-900">Last 7 days</h2>
+                    <p class="mt-2 text-sm leading-6 text-gray-500">Track daily participation to spot sudden drops and recover quickly.</p>
+                </div>
+                <span class="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-green-700">Daily</span>
+            </div>
+            <div class="mt-6 h-[300px]">
+                <canvas id="attendance_trend_chart"></canvas>
+            </div>
+        </div>
+
+        <div class="surface-panel rounded-3xl p-6">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Meal Distribution</p>
+                    <h2 class="mt-2 text-2xl font-bold text-gray-900">Today&apos;s coverage</h2>
+                    <p class="mt-2 text-sm leading-6 text-gray-500">See how meal participation is spread across breakfast, lunch, and dinner.</p>
+                </div>
+                <span class="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-blue-700">Meals</span>
+            </div>
+            <div class="mt-6 h-[300px]">
+                <canvas id="meal_distribution_chart"></canvas>
+            </div>
+        </div>
+
+        <div class="surface-panel rounded-3xl p-6">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Nutrition Compliance</p>
+                    <h2 class="mt-2 text-2xl font-bold text-gray-900">Grade performance</h2>
+                    <p class="mt-2 text-sm leading-6 text-gray-500">Compare grade-level meal consistency against a 30-day benchmark.</p>
+                </div>
+                <span class="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-indigo-700">30 Days</span>
+            </div>
+            <div class="mt-6 h-[300px]">
+                <canvas id="nutrition_compliance_chart"></canvas>
+            </div>
+        </div>
+    </section>
+
+    <section class="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(20rem,0.85fr)]">
+        <div class="surface-panel rounded-3xl p-6">
+            <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                <div>
+                    <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Program Impact</p>
+                    <h2 class="mt-2 text-2xl font-bold text-gray-900">School-wide outcome indicators</h2>
+                    <p class="mt-2 text-sm leading-6 text-gray-500">A concise view of the core metrics leadership can review during weekly check-ins.</p>
+                </div>
+                <div class="rounded-2xl bg-gray-50 px-4 py-3">
+                    <p class="text-xs font-semibold uppercase tracking-[0.12em] text-gray-500">Best Attendance</p>
+                    <p class="mt-1 text-sm font-semibold text-gray-900">
+                        {% if strongest_class %}
+                            {{ strongest_class.name }} - {{ strongest_class.avg_attendance }}%
+                        {% else %}
+                            No class data
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+
+            <div class="mt-6 overflow-x-auto">
+                <table class="insight-table min-w-full divide-y divide-gray-200">
+                    <thead>
+                        <tr>
+                            <th class="px-4 py-3 text-left">Metric</th>
+                            <th class="px-4 py-3 text-left">Current Value</th>
+                            <th class="px-4 py-3 text-left">Change</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200">
+                        {% for item in health_impact_data %}
+                            <tr>
+                                <td class="px-4 py-4 text-sm font-semibold text-gray-900">{{ item.metric }}</td>
+                                <td class="px-4 py-4 text-sm text-gray-600">{{ item.current_value }}</td>
+                                <td class="px-4 py-4 text-sm">
+                                    <span class="inline-flex rounded-full px-3 py-1 font-semibold {% if item.change == 'N/A' %}bg-gray-100 text-gray-600{% elif '-' in item.change|string %}bg-red-50 text-red-600{% else %}bg-green-50 text-green-700{% endif %}">
+                                        {{ item.change }}
+                                    </span>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="surface-panel rounded-3xl p-6">
+            <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Leadership Summary</p>
+            <h2 class="mt-2 text-2xl font-bold text-gray-900">What stands out right now</h2>
+            <div class="mt-6 space-y-5">
+                <div class="rounded-2xl bg-gray-50 p-5">
+                    <p class="text-sm font-semibold text-gray-900">Top attendance grade</p>
+                    <p class="mt-2 text-lg font-bold text-gray-900">
+                        {% if strongest_class %}
+                            {{ strongest_class.name }}
+                        {% else %}
+                            Not available
+                        {% endif %}
+                    </p>
+                    <p class="mt-1 text-sm text-gray-600">
+                        {% if strongest_class %}
+                            {{ strongest_class.avg_attendance }}% average attendance over the last 7 days.
+                        {% else %}
+                            Attendance insights will appear once grade data is available.
+                        {% endif %}
+                    </p>
+                </div>
+
+                <div class="rounded-2xl bg-gray-50 p-5">
+                    <p class="text-sm font-semibold text-gray-900">Top nutrition grade</p>
+                    <p class="mt-2 text-lg font-bold text-gray-900">
+                        {% if best_nutrition_class %}
+                            {{ best_nutrition_class.name }}
+                        {% else %}
+                            Not available
+                        {% endif %}
+                    </p>
+                    <p class="mt-1 text-sm text-gray-600">
+                        {% if best_nutrition_class %}
+                            {{ best_nutrition_class.avg_nutrition_score }}% compliance across the latest 30-day view.
+                        {% else %}
+                            Nutrition benchmarks will appear once meal participation data is available.
+                        {% endif %}
+                    </p>
+                </div>
+
+                <div class="rounded-2xl bg-gray-50 p-5">
+                    <p class="text-sm font-semibold text-gray-900">Coverage note</p>
+                    <p class="mt-2 text-sm leading-6 text-gray-600">
+                        Daily attendance here is measured through recorded breakfast, lunch, or dinner participation, which keeps the reporting aligned with meal operations.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="surface-panel rounded-3xl p-6">
+        <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+                <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Class Insights</p>
+                <h2 class="mt-2 text-2xl font-bold text-gray-900">Grade-level performance overview</h2>
+                <p class="mt-2 text-sm leading-6 text-gray-500">Compare student count, attendance, and nutrition consistency across grades in one table.</p>
+            </div>
+            <div class="rounded-2xl bg-gray-50 px-4 py-3">
+                <p class="text-xs font-semibold uppercase tracking-[0.12em] text-gray-500">Grades in report</p>
+                <p class="mt-1 text-sm font-semibold text-gray-900">{{ class_insights|length }}</p>
+            </div>
+        </div>
+
+        <div class="mt-6 overflow-x-auto">
+            <table class="insight-table min-w-full divide-y divide-gray-200">
+                <thead>
+                    <tr>
+                        <th class="px-4 py-3 text-left">Class Name</th>
+                        <th class="px-4 py-3 text-left">Students</th>
+                        <th class="px-4 py-3 text-left">Avg. Attendance</th>
+                        <th class="px-4 py-3 text-left">Avg. Nutrition Score</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200">
+                    {% for class_item in class_insights %}
+                        <tr>
+                            <td class="px-4 py-4 text-sm font-semibold text-gray-900">{{ class_item.name }}</td>
+                            <td class="px-4 py-4 text-sm text-gray-600">{{ class_item.students }}</td>
+                            <td class="px-4 py-4 text-sm text-gray-600">{{ class_item.avg_attendance }}%</td>
+                            <td class="px-4 py-4 text-sm">
+                                <span class="inline-flex rounded-full px-3 py-1 font-semibold {% if class_item.avg_nutrition_score >= 70 %}bg-green-50 text-green-700{% elif class_item.avg_nutrition_score >= 40 %}bg-amber-50 text-amber-700{% else %}bg-gray-100 text-gray-700{% endif %}">
+                                    {{ class_item.avg_nutrition_score }}
+                                </span>
+                            </td>
+                        </tr>
+                    {% else %}
+                        <tr>
+                            <td colspan="4" class="px-4 py-8 text-center text-sm text-gray-500">No class insights are available yet.</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const fontFamily = "'Inter', sans-serif";
+        Chart.defaults.font.family = fontFamily;
+        Chart.defaults.color = '#6b7280';
+
+        const attendanceCtx = document.getElementById('attendance_trend_chart').getContext('2d');
+        const attendanceGradient = attendanceCtx.createLinearGradient(0, 0, 0, 280);
+        attendanceGradient.addColorStop(0, 'rgba(34, 197, 94, 0.22)');
+        attendanceGradient.addColorStop(1, 'rgba(34, 197, 94, 0)');
+
+        new Chart(attendanceCtx, {
+            type: 'line',
+            data: {
+                labels: {{ attendance_labels | tojson }},
+                datasets: [{
+                    label: 'Attendance %',
+                    data: {{ attendance_data | tojson }},
+                    borderColor: '#16A34A',
+                    backgroundColor: attendanceGradient,
+                    borderWidth: 3,
+                    pointRadius: 4,
+                    pointHoverRadius: 5,
+                    pointBackgroundColor: '#ffffff',
+                    pointBorderColor: '#16A34A',
+                    pointBorderWidth: 2,
+                    tension: 0.35,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: '#111827',
+                        padding: 12,
+                        displayColors: false
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { display: false }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        ticks: { stepSize: 20 },
+                        grid: { color: 'rgba(148, 163, 184, 0.18)' }
+                    }
+                }
+            }
+        });
+
+        const mealsCtx = document.getElementById('meal_distribution_chart').getContext('2d');
+        new Chart(mealsCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Breakfast', 'Lunch', 'Dinner'],
+                datasets: [{
+                    data: {{ meal_distribution_data | tojson }},
+                    backgroundColor: ['#3B82F6', '#22C55E', '#F97316'],
+                    borderColor: '#ffffff',
+                    borderWidth: 6,
+                    hoverOffset: 8
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '68%',
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            pointStyle: 'circle',
+                            padding: 18
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: '#111827',
+                        padding: 12
+                    }
+                }
+            }
+        });
+
+        const nutritionCtx = document.getElementById('nutrition_compliance_chart').getContext('2d');
+        new Chart(nutritionCtx, {
+            type: 'bar',
+            data: {
+                labels: {{ nutrition_compliance_labels | tojson }},
+                datasets: [{
+                    label: '% Compliance',
+                    data: {{ nutrition_compliance_data | tojson }},
+                    backgroundColor: ['#22C55E', '#10B981', '#3B82F6', '#6366F1', '#F97316', '#14B8A6'],
+                    borderRadius: 10,
+                    maxBarThickness: 44
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: '#111827',
+                        padding: 12
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { display: false }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        ticks: { stepSize: 20 },
+                        grid: { color: 'rgba(148, 163, 184, 0.18)' }
+                    }
+                }
+            }
+        });
+    });
+</script>
+{% endblock %}

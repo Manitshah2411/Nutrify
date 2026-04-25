@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+
+{% block title %}Health Awareness - Nutrify{% endblock %}
+
+{% block nav_awareness %}bg-green-50 text-green-700 shadow-sm ring-1 ring-green-100 transition-colors{% endblock %}
+
+{% block extra_head %}
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+    .awareness-card {
+        transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+    }
+
+    .awareness-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 24px 40px -32px rgba(15, 23, 42, 0.35);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+{% set totals = namespace(nutrition=0, exercise=0, hygiene=0) %}
+{% for item in awareness_content %}
+    {% if item.category == 'Nutrition' %}
+        {% set totals.nutrition = totals.nutrition + 1 %}
+    {% elif item.category == 'Exercise' %}
+        {% set totals.exercise = totals.exercise + 1 %}
+    {% elif item.category == 'Hygiene' %}
+        {% set totals.hygiene = totals.hygiene + 1 %}
+    {% endif %}
+{% endfor %}
+
+<section class="page-atmosphere border-b border-gray-200">
+    <div class="page-ray-grid"></div>
+    <div class="glow-orb left-[-7rem] top-[-5rem] h-72 w-72"></div>
+    <div class="glow-orb right-[-4rem] top-[-6rem] h-80 w-80"></div>
+    <div class="relative max-w-7xl mx-auto px-4 py-10 sm:px-6 lg:px-8">
+        <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-end">
+            <div class="max-w-3xl">
+                <p class="text-sm font-semibold uppercase tracking-[0.18em] text-green-700">Health Awareness</p>
+                <h1 class="mt-3 text-4xl font-extrabold tracking-tight text-gray-900 sm:text-5xl">
+                    Daily health guidance made easy to browse.
+                </h1>
+                <p class="mt-4 max-w-2xl text-base leading-7 text-gray-600 sm:text-lg">
+                    Explore short, practical reads on nutrition, exercise, and hygiene so you can build better habits one day at a time.
+                </p>
+                <div class="mt-6 grid gap-4 sm:grid-cols-3">
+                    <div class="glass-panel rounded-2xl p-4">
+                        <p class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">Articles</p>
+                        <p class="mt-2 text-2xl font-bold text-gray-900">{{ awareness_content|length }}</p>
+                        <p class="mt-1 text-sm text-gray-600">Curated learning resources</p>
+                    </div>
+                    <div class="glass-panel rounded-2xl p-4">
+                        <p class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">Topics</p>
+                        <p class="mt-2 text-2xl font-bold text-gray-900">3</p>
+                        <p class="mt-1 text-sm text-gray-600">Nutrition, exercise, hygiene</p>
+                    </div>
+                    <div class="glass-panel rounded-2xl p-4">
+                        <p class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">Use Case</p>
+                        <p class="mt-2 text-2xl font-bold text-gray-900">Fast</p>
+                        <p class="mt-1 text-sm text-gray-600">Search, scan, and read quickly</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-panel rounded-3xl p-6">
+                <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Browse by Topic</p>
+                <div class="mt-5 space-y-4">
+                    <div class="flex items-center justify-between gap-4">
+                        <div>
+                            <p class="text-sm font-semibold text-gray-900">Nutrition</p>
+                            <p class="mt-1 text-sm text-gray-600">Healthy eating and balanced choices</p>
+                        </div>
+                        <span class="rounded-full bg-white px-3 py-1 text-sm font-semibold text-gray-900 shadow-sm">{{ totals.nutrition }}</span>
+                    </div>
+                    <div class="flex items-center justify-between gap-4">
+                        <div>
+                            <p class="text-sm font-semibold text-gray-900">Exercise</p>
+                            <p class="mt-1 text-sm text-gray-600">Movement, strength, and fitness tips</p>
+                        </div>
+                        <span class="rounded-full bg-white px-3 py-1 text-sm font-semibold text-gray-900 shadow-sm">{{ totals.exercise }}</span>
+                    </div>
+                    <div class="flex items-center justify-between gap-4">
+                        <div>
+                            <p class="text-sm font-semibold text-gray-900">Hygiene</p>
+                            <p class="mt-1 text-sm text-gray-600">Daily routines that support wellbeing</p>
+                        </div>
+                        <span class="rounded-full bg-white px-3 py-1 text-sm font-semibold text-gray-900 shadow-sm">{{ totals.hygiene }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
+    <div
+        x-data='{
+            search: "",
+            activeCategory: "All",
+            content: {{ awareness_content | tojson | safe }},
+            get filteredContent() {
+                if (this.activeCategory === "All") {
+                    return this.content.filter(item =>
+                        item.title.toLowerCase().includes(this.search.toLowerCase())
+                    );
+                }
+                return this.content.filter(item =>
+                    item.category === this.activeCategory &&
+                    item.title.toLowerCase().includes(this.search.toLowerCase())
+                );
+            }
+        }'
+        class="space-y-6"
+    >
+        <section class="surface-panel rounded-3xl p-6">
+            <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-center">
+                <div class="flex flex-wrap gap-3">
+                    <button
+                        @click="activeCategory = 'All'"
+                        :class="activeCategory === 'All' ? 'bg-green-600 text-white shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
+                        class="rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors"
+                    >
+                        All Topics
+                    </button>
+                    <button
+                        @click="activeCategory = 'Nutrition'"
+                        :class="activeCategory === 'Nutrition' ? 'bg-green-600 text-white shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
+                        class="rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors"
+                    >
+                        Nutrition
+                    </button>
+                    <button
+                        @click="activeCategory = 'Exercise'"
+                        :class="activeCategory === 'Exercise' ? 'bg-green-600 text-white shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
+                        class="rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors"
+                    >
+                        Exercise
+                    </button>
+                    <button
+                        @click="activeCategory = 'Hygiene'"
+                        :class="activeCategory === 'Hygiene' ? 'bg-green-600 text-white shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
+                        class="rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors"
+                    >
+                        Hygiene
+                    </button>
+                </div>
+
+                <div class="relative">
+                    <input
+                        x-model="search"
+                        type="text"
+                        placeholder="Search articles"
+                        class="block w-full rounded-xl border border-gray-300 py-3 pl-11 pr-4 text-sm text-gray-900 shadow-sm focus:border-green-500 focus:ring-green-500"
+                    >
+                    <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 text-gray-400">
+                        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35m1.85-4.65a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+            <template x-for="item in filteredContent" :key="item.title">
+                <article class="awareness-card surface-panel flex h-full flex-col rounded-3xl p-6">
+                    <div class="flex items-start justify-between gap-4">
+                        <div class="flex items-start gap-4">
+                            <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-green-50 text-3xl ring-1 ring-green-100" x-text="item.icon"></div>
+                            <div>
+                                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-green-700" x-text="item.category"></p>
+                                <h3 class="mt-2 text-xl font-bold text-gray-900" x-text="item.title"></h3>
+                            </div>
+                        </div>
+                    </div>
+
+                    <p class="mt-4 flex-grow text-sm leading-6 text-gray-600" x-text="item.summary"></p>
+
+                    <div class="mt-6 flex items-center justify-between gap-4 border-t border-gray-200 pt-5">
+                        <span class="text-sm text-gray-500">Trusted external reading</span>
+                        <a
+                            :href="item.link"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="inline-flex items-center justify-center rounded-xl bg-green-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700"
+                        >
+                            Read Article
+                        </a>
+                    </div>
+                </article>
+            </template>
+
+            <template x-if="filteredContent.length === 0">
+                <div class="md:col-span-2 xl:col-span-3">
+                    <div class="surface-panel rounded-3xl px-6 py-12 text-center">
+                        <p class="text-lg font-semibold text-gray-900">No articles match that search.</p>
+                        <p class="mt-2 text-sm text-gray-500">Try a different keyword or switch to another topic.</p>
+                    </div>
+                </div>
+            </template>
+        </section>
+    </div>
+</div>
+{% endblock %}

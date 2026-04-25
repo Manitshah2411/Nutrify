@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Edit Meal Plan{% endblock %}
+{% block content %}
+<div class="max-w-4xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
+    <div class="bg-white p-8 rounded-xl shadow-lg border border-gray-200">
+        <h1 class="text-3xl font-bold text-gray-900">Edit Meal Plan</h1>
+        <p class="mt-1 text-gray-600">You are editing the plan for <span class="font-semibold">{{ plan.plan_date.strftime('%d %B, %Y') }}</span>.</p>
+
+        <div class="mt-8 border-t border-gray-200 pt-8">
+            <form action="{{ url_for('main.edit_meal_plan', plan_id=plan.id) }}" method="POST" class="space-y-8">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                {% for meal_type in ['Breakfast', 'Lunch', 'Dinner'] %}
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-700 capitalize">{{ meal_type }}</h3>
+                        <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {% for food in all_foods %}
+                                <label class="inline-flex items-center p-2 rounded-md hover:bg-gray-50 transition-colors">
+                                    <input type="checkbox" name="{{ meal_type.lower() }}_foods" value="{{ food.id }}" 
+                                           {% if food.id in existing_food_ids[meal_type] %} checked {% endif %}
+                                           class="form-checkbox h-5 w-5 text-green-600 rounded border-gray-300 focus:ring-green-500">
+                                    <span class="ml-3 text-gray-700">{{ food.name }} ({{ food.calories }} kcal)</span>
+                                </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                {% endfor %}
+
+                <div class="flex items-center space-x-4 pt-5">
+                    <button type="submit" class="inline-flex justify-center py-2 px-6 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700">
+                        Save Changes
+                    </button>
+                    <a href="{{ url_for('main.dashboard') }}" class="py-2 px-6 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                        Cancel
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

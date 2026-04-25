@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+
+{% block title %}Health Form - Nutrify{% endblock %}
+
+{% block nav_health %}bg-green-50 text-green-700 shadow-sm ring-1 ring-green-100 transition-colors{% endblock %}
+
+{% block extra_head %}
+<style>
+    .choice-card {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 3.5rem;
+        border: 1px solid #d1d5db;
+        border-radius: 0.875rem;
+        background: #ffffff;
+        color: #111827;
+        font-weight: 600;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+    }
+
+    .choice-card:hover {
+        border-color: #86efac;
+        transform: translateY(-1px);
+    }
+
+    .choice-card:has(input:checked) {
+        border-color: #16a34a;
+        background: linear-gradient(180deg, #f0fdf4 0%, #dcfce7 100%);
+        box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.12);
+        color: #166534;
+    }
+
+    .choice-card:has(input:focus-visible) {
+        outline: 2px solid rgba(34, 197, 94, 0.35);
+        outline-offset: 2px;
+    }
+
+    .readonly-field {
+        background: #f8fafc;
+        color: #111827;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+{% set school_label = student.school.school_name if student.school else 'N/A' %}
+
+<section class="page-atmosphere border-b border-gray-200">
+    <div class="page-ray-grid"></div>
+    <div class="glow-orb left-[-7rem] top-[-5rem] h-72 w-72"></div>
+    <div class="glow-orb right-[-4rem] top-[-6rem] h-80 w-80"></div>
+    <div class="relative max-w-7xl mx-auto px-4 py-10 sm:px-6 lg:px-8">
+        <div class="max-w-3xl">
+            <p class="text-sm font-semibold uppercase tracking-[0.18em] text-green-700">Health Check-In</p>
+            <h1 class="mt-3 text-4xl font-extrabold tracking-tight text-gray-900 sm:text-5xl">Capture the details behind better health insights.</h1>
+            <p class="mt-4 max-w-2xl text-base leading-7 text-gray-600 sm:text-lg">
+                Review your school profile, confirm your latest measurements, and answer a few lifestyle questions so Nutrify can generate a more useful health summary.
+            </p>
+        </div>
+
+        <div class="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4 max-w-6xl">
+            <div class="glass-panel rounded-2xl p-4">
+                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">Student</p>
+                <p class="mt-2 text-lg font-bold text-gray-900">{{ student.full_name }}</p>
+                <p class="mt-1 text-sm text-gray-600">Roll no. {{ student.roll_no }}</p>
+            </div>
+            <div class="glass-panel rounded-2xl p-4">
+                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">School</p>
+                <p class="mt-2 text-lg font-bold text-gray-900">{{ school_label }}</p>
+                <p class="mt-1 text-sm text-gray-600">Grade {{ student.grade }} - {{ student.section }}</p>
+            </div>
+            <div class="glass-panel rounded-2xl p-4">
+                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">Latest Height</p>
+                <p class="mt-2 text-lg font-bold text-gray-900">{{ student.latest_height or "Not recorded" }}</p>
+                <p class="mt-1 text-sm text-gray-600">{% if student.latest_height %}cm{% else %}Health record pending{% endif %}</p>
+            </div>
+            <div class="glass-panel rounded-2xl p-4">
+                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">Current BMI</p>
+                <p class="mt-2 text-lg font-bold text-gray-900">{% if student.bmi %}{{ "%.1f"|format(student.bmi) }}{% else %}Not available{% endif %}</p>
+                <p class="mt-1 text-sm text-gray-600">Based on the latest recorded data</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <div class="space-y-3">
+                {% for category, message in messages %}
+                    <div class="flash-message rounded-2xl border px-4 py-4 shadow-sm {{ 'border-red-200 bg-red-50 text-red-700' if category == 'danger' else 'border-yellow-200 bg-yellow-50 text-yellow-800' }}" role="alert">
+                        <p class="font-medium">{{ message }}</p>
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+
+    <form action="{{ url_for('main.health_form') }}" method="POST" class="space-y-8">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <section class="surface-panel overflow-hidden rounded-3xl">
+            <div class="border-b border-gray-200 px-6 py-5 sm:px-8">
+                <div class="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                    <div>
+                        <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Section 1</p>
+                        <h2 class="mt-1 text-2xl font-bold text-gray-900">Basic information</h2>
+                    </div>
+                    <p class="max-w-xl text-sm leading-6 text-gray-500">Review the profile details provided by your school and update any editable basics before generating insights.</p>
+                </div>
+            </div>
+            <div class="grid gap-6 px-6 py-6 sm:px-8 sm:py-8 md:grid-cols-2 xl:grid-cols-3">
+                <div>
+                    <label for="student_id" class="block text-sm font-semibold text-gray-700">Roll No</label>
+                    <input type="text" id="student_id" name="student_id" value="{{ student.roll_no }}" readonly class="readonly-field mt-3 block w-full rounded-xl border border-gray-200 px-4 py-3 shadow-sm">
+                </div>
+                <div>
+                    <label for="name" class="block text-sm font-semibold text-gray-700">Name</label>
+                    <input type="text" id="name" name="name" value="{{ student.full_name }}" readonly class="readonly-field mt-3 block w-full rounded-xl border border-gray-200 px-4 py-3 shadow-sm">
+                </div>
+                <div>
+                    <label for="school_name" class="block text-sm font-semibold text-gray-700">School Name</label>
+                    <input type="text" id="school_name" name="school_name" value="{{ school_label }}" readonly class="readonly-field mt-3 block w-full rounded-xl border border-gray-200 px-4 py-3 shadow-sm">
+                </div>
+                <div>
+                    <label for="age" class="block text-sm font-semibold text-gray-700">Age</label>
+                    <input type="number" id="age" name="age" value="{{ form_data.age if form_data else student.age }}" required class="mt-3 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                </div>
+                <div>
+                    <label for="sex" class="block text-sm font-semibold text-gray-700">Gender</label>
+                    <select id="sex" name="sex" required class="mt-3 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                        <option {% if (form_data and form_data.sex == 'Male') or (not form_data and student.sex == 'Male') %}selected{% endif %}>Male</option>
+                        <option {% if (form_data and form_data.sex == 'Female') or (not form_data and student.sex == 'Female') %}selected{% endif %}>Female</option>
+                        <option {% if form_data and form_data.sex == 'Other' %}selected{% endif %}>Other</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="grade" class="block text-sm font-semibold text-gray-700">Class / Grade</label>
+                    <input type="text" id="grade" name="grade" value="Grade {{ student.grade }} - {{ student.section }}" readonly class="readonly-field mt-3 block w-full rounded-xl border border-gray-200 px-4 py-3 shadow-sm">
+                </div>
+            </div>
+        </section>
+
+        <section class="surface-panel overflow-hidden rounded-3xl">
+            <div class="border-b border-gray-200 px-6 py-5 sm:px-8">
+                <div class="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                    <div>
+                        <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Section 2</p>
+                        <h2 class="mt-1 text-2xl font-bold text-gray-900">Health details</h2>
+                    </div>
+                    <p class="max-w-xl text-sm leading-6 text-gray-500">Enter your current measurements so BMI analysis and recommendations reflect your latest health status.</p>
+                </div>
+            </div>
+            <div class="grid gap-6 px-6 py-6 sm:px-8 sm:py-8 lg:grid-cols-3">
+                <div>
+                    <label for="height" class="block text-sm font-semibold text-gray-700">Height (cm)</label>
+                    <p class="mt-1 text-sm text-gray-500">Latest record: {{ student.latest_height or "Not available" }}</p>
+                    <input type="number" step="0.1" id="height" name="height" value="{{ form_data.height if form_data else (student.latest_height or '') }}" required class="mt-3 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                </div>
+                <div>
+                    <label for="weight" class="block text-sm font-semibold text-gray-700">Weight (kg)</label>
+                    <p class="mt-1 text-sm text-gray-500">Latest record: {{ student.latest_weight or "Not available" }}</p>
+                    <input type="number" step="0.1" id="weight" name="weight" value="{{ form_data.weight if form_data else (student.latest_weight or '') }}" required class="mt-3 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                </div>
+                <div>
+                    <label for="waist" class="block text-sm font-semibold text-gray-700">Waist Size (cm)</label>
+                    <p class="mt-1 text-sm text-gray-500">Used to support the AI health summary.</p>
+                    <input type="number" step="0.1" id="waist" name="waist" value="{{ form_data.waist if form_data else '' }}" required class="mt-3 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                </div>
+            </div>
+        </section>
+
+        <section class="surface-panel overflow-hidden rounded-3xl">
+            <div class="border-b border-gray-200 px-6 py-5 sm:px-8">
+                <div class="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                    <div>
+                        <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Section 3</p>
+                        <h2 class="mt-1 text-2xl font-bold text-gray-900">Nutrition and lifestyle</h2>
+                    </div>
+                    <p class="max-w-xl text-sm leading-6 text-gray-500">These routine questions help Nutrify understand the habits that shape your daily health and nutrition patterns.</p>
+                </div>
+            </div>
+
+            <div class="px-6 py-6 sm:px-8 sm:py-8">
+                <div class="divide-y divide-gray-200">
+                    <div class="grid gap-5 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,30rem)] lg:items-center">
+                        <div>
+                            <label class="text-base font-semibold text-gray-900">Meals per day</label>
+                            <p class="mt-2 text-sm leading-6 text-gray-500">Low: 1-2 meals, Medium: 3 meals, High: 4+ meals</p>
+                        </div>
+                        <div class="grid grid-cols-3 gap-3">
+                            <label class="choice-card"><input type="radio" name="meals_per_day" value="Low" class="sr-only" required {% if form_data and form_data.meals_per_day == 'Low' %}checked{% endif %}>Low</label>
+                            <label class="choice-card"><input type="radio" name="meals_per_day" value="Medium" class="sr-only" {% if form_data and form_data.meals_per_day == 'Medium' %}checked{% endif %}>Medium</label>
+                            <label class="choice-card"><input type="radio" name="meals_per_day" value="High" class="sr-only" {% if form_data and form_data.meals_per_day == 'High' %}checked{% endif %}>High</label>
+                        </div>
+                    </div>
+
+                    <div class="grid gap-5 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,30rem)] lg:items-center">
+                        <div>
+                            <label class="text-base font-semibold text-gray-900">Fruits and vegetables intake</label>
+                            <p class="mt-2 text-sm leading-6 text-gray-500">Low: Rarely, Medium: 3-4 times a week, High: Daily</p>
+                        </div>
+                        <div class="grid grid-cols-3 gap-3">
+                            <label class="choice-card"><input type="radio" name="fruit_veg_intake" value="Low" class="sr-only" required {% if form_data and form_data.fruit_veg_intake == 'Low' %}checked{% endif %}>Low</label>
+                            <label class="choice-card"><input type="radio" name="fruit_veg_intake" value="Medium" class="sr-only" {% if form_data and form_data.fruit_veg_intake == 'Medium' %}checked{% endif %}>Medium</label>
+                            <label class="choice-card"><input type="radio" name="fruit_veg_intake" value="High" class="sr-only" {% if form_data and form_data.fruit_veg_intake == 'High' %}checked{% endif %}>High</label>
+                        </div>
+                    </div>
+
+                    <div class="grid gap-5 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,30rem)] lg:items-center">
+                        <div>
+                            <label class="text-base font-semibold text-gray-900">Junk food and soft drinks</label>
+                            <p class="mt-2 text-sm leading-6 text-gray-500">Low: Rarely, Medium: 2-3 times a week, High: Almost daily</p>
+                        </div>
+                        <div class="grid grid-cols-3 gap-3">
+                            <label class="choice-card"><input type="radio" name="junk_food_intake" value="Low" class="sr-only" required {% if form_data and form_data.junk_food_intake == 'Low' %}checked{% endif %}>Low</label>
+                            <label class="choice-card"><input type="radio" name="junk_food_intake" value="Medium" class="sr-only" {% if form_data and form_data.junk_food_intake == 'Medium' %}checked{% endif %}>Medium</label>
+                            <label class="choice-card"><input type="radio" name="junk_food_intake" value="High" class="sr-only" {% if form_data and form_data.junk_food_intake == 'High' %}checked{% endif %}>High</label>
+                        </div>
+                    </div>
+
+                    <div class="grid gap-5 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,30rem)] lg:items-center">
+                        <div>
+                            <label class="text-base font-semibold text-gray-900">Water intake</label>
+                            <p class="mt-2 text-sm leading-6 text-gray-500">Low: Less than 4 glasses, Medium: 4-7 glasses, High: 8+ glasses</p>
+                        </div>
+                        <div class="grid grid-cols-3 gap-3">
+                            <label class="choice-card"><input type="radio" name="water_intake" value="Low" class="sr-only" required {% if form_data and form_data.water_intake == 'Low' %}checked{% endif %}>Low</label>
+                            <label class="choice-card"><input type="radio" name="water_intake" value="Medium" class="sr-only" {% if form_data and form_data.water_intake == 'Medium' %}checked{% endif %}>Medium</label>
+                            <label class="choice-card"><input type="radio" name="water_intake" value="High" class="sr-only" {% if form_data and form_data.water_intake == 'High' %}checked{% endif %}>High</label>
+                        </div>
+                    </div>
+
+                    <div class="grid gap-5 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,30rem)] lg:items-center">
+                        <div>
+                            <label class="text-base font-semibold text-gray-900">Sleep hours</label>
+                            <p class="mt-2 text-sm leading-6 text-gray-500">Low: Less than 6 hours, Medium: 6-8 hours, High: 9+ hours</p>
+                        </div>
+                        <div class="grid grid-cols-3 gap-3">
+                            <label class="choice-card"><input type="radio" name="sleep_hours" value="Low" class="sr-only" required {% if form_data and form_data.sleep_hours == 'Low' %}checked{% endif %}>Low</label>
+                            <label class="choice-card"><input type="radio" name="sleep_hours" value="Medium" class="sr-only" {% if form_data and form_data.sleep_hours == 'Medium' %}checked{% endif %}>Medium</label>
+                            <label class="choice-card"><input type="radio" name="sleep_hours" value="High" class="sr-only" {% if form_data and form_data.sleep_hours == 'High' %}checked{% endif %}>High</label>
+                        </div>
+                    </div>
+
+                    <div class="grid gap-5 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,30rem)] lg:items-center">
+                        <div>
+                            <label class="text-base font-semibold text-gray-900">Physical activity and play time</label>
+                            <p class="mt-2 text-sm leading-6 text-gray-500">Low: Less than 30 mins/day, Medium: 30-60 mins/day, High: More than 1 hour/day</p>
+                        </div>
+                        <div class="grid grid-cols-3 gap-3">
+                            <label class="choice-card"><input type="radio" name="physical_activity" value="Low" class="sr-only" required {% if form_data and form_data.physical_activity == 'Low' %}checked{% endif %}>Low</label>
+                            <label class="choice-card"><input type="radio" name="physical_activity" value="Medium" class="sr-only" {% if form_data and form_data.physical_activity == 'Medium' %}checked{% endif %}>Medium</label>
+                            <label class="choice-card"><input type="radio" name="physical_activity" value="High" class="sr-only" {% if form_data and form_data.physical_activity == 'High' %}checked{% endif %}>High</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-8 flex flex-col gap-4 rounded-2xl border border-gray-200 bg-gray-50 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                    <div>
+                        <p class="text-sm font-semibold text-gray-900">Ready to generate your report?</p>
+                        <p class="mt-2 max-w-3xl text-sm leading-6 text-gray-600">
+                            The insights are educational and should support, not replace, professional medical advice from a qualified healthcare provider.
+                        </p>
+                    </div>
+                    <button type="submit" class="inline-flex min-h-[3.25rem] items-center justify-center rounded-xl bg-green-600 px-6 py-3 text-base font-semibold text-white shadow-sm transition hover:bg-green-700">
+                        Generate Health Insights
+                    </button>
+                </div>
+            </div>
+        </section>
+    </form>
+
+    {% if insights %}
+        <section id="insights-container" class="surface-panel overflow-hidden rounded-3xl border-green-200">
+            <div class="border-b border-gray-200 bg-gradient-to-r from-green-50 to-white px-6 py-6 sm:px-8">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                    <div>
+                        <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">AI Health Report</p>
+                        <h2 class="mt-1 text-3xl font-bold text-gray-900">Personal health insights</h2>
+                        <p class="mt-3 max-w-3xl text-sm leading-6 text-gray-600">{{ insights.overall_summary }}</p>
+                    </div>
+                    <div class="rounded-2xl border border-green-200 bg-white px-5 py-4 shadow-sm">
+                        <p class="text-xs font-semibold uppercase tracking-[0.12em] text-gray-500">BMI Analysis</p>
+                        <p class="mt-2 text-2xl font-bold {% if 'Normal' in insights.bmi_analysis.category %}text-green-600{% elif 'Underweight' in insights.bmi_analysis.category %}text-yellow-600{% else %}text-red-600{% endif %}">
+                            {{ insights.bmi_analysis.category }}
+                        </p>
+                        <p class="mt-2 max-w-sm text-sm leading-6 text-gray-600">{{ insights.bmi_analysis.comment }}</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid gap-0 lg:grid-cols-2">
+                <div class="border-b border-gray-200 px-6 py-6 sm:px-8 lg:border-b-0 lg:border-r">
+                    <h3 class="text-xl font-bold text-gray-900">What is going well</h3>
+                    <ul class="mt-5 space-y-4">
+                        {% for point in insights.positive_points %}
+                            <li class="border-b border-gray-100 pb-4 text-sm leading-6 text-gray-700 last:border-b-0 last:pb-0">
+                                <span class="font-semibold text-green-700">Positive signal:</span> {{ point }}
+                            </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                <div class="px-6 py-6 sm:px-8">
+                    <h3 class="text-xl font-bold text-gray-900">Areas to strengthen</h3>
+                    <div class="mt-5 space-y-5">
+                        {% for item in insights.areas_for_improvement %}
+                            <div class="border-b border-gray-100 pb-5 last:border-b-0 last:pb-0">
+                                <p class="text-base font-semibold text-gray-900">{{ item.point }}</p>
+                                <p class="mt-2 text-sm leading-6 text-gray-600">{{ item.recommendation }}</p>
+                            </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </section>
+    {% endif %}
+</div>
+{% endblock %}

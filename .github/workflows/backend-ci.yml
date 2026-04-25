@@ -1,0 +1,47 @@
+name: Backend CI
+
+on:
+  push:
+    paths:
+      - ".github/workflows/backend-ci.yml"
+      - ".python-version"
+      - "backend/**"
+      - "render.yaml"
+  pull_request:
+    paths:
+      - ".github/workflows/backend-ci.yml"
+      - ".python-version"
+      - "backend/**"
+      - "render.yaml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate migrations
+        env:
+          APP_ENV: development
+          DATABASE_URL: sqlite:////tmp/nutrify-ci.db
+          GOOGLE_API_KEY: test-key
+        run: python -m flask --app wsgi:application db upgrade -d migrations
+
+      - name: Run tests
+        run: pytest tests

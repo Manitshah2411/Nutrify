@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Food - {{ food.name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
+    <div class="bg-white p-8 rounded-xl shadow-lg border border-gray-200">
+        <h1 class="text-3xl font-bold text-gray-900">Edit Food Item</h1>
+        <p class="mt-1 text-gray-600">You are editing the details for <span class="font-semibold">{{ food.name }}</span>.</p>
+
+        <div class="mt-8 border-t border-gray-200 pt-8">
+            <form action="{{ url_for('main.edit_food', food_id=food.id) }}" method="POST" class="space-y-6">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                    <div class="md:col-span-2">
+                        <label for="name" class="block text-sm font-medium text-gray-700">Food Name</label>
+                        <input type="text" name="name" id="name" value="{{ food.name }}" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm">
+                    </div>
+                    <div>
+                        <label for="calories" class="block text-sm font-medium text-gray-700">Calories (kcal)</label>
+                        <input type="number" step="0.1" min="0" name="calories" id="calories" value="{{ food.calories }}" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm">
+                    </div>
+                    <div>
+                        <label for="protein" class="block text-sm font-medium text-gray-700">Protein (g)</label>
+                        <input type="number" step="0.1" min="0" name="protein" id="protein" value="{{ food.protein }}" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm">
+                    </div>
+                    <div>
+                        <label for="carbs" class="block text-sm font-medium text-gray-700">Carbs (g)</label>
+                        <input type="number" step="0.1" min="0" name="carbs" id="carbs" value="{{ food.carbs }}" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm">
+                    </div>
+                    <div>
+                        <label for="fats" class="block text-sm font-medium text-gray-700">Fats (g)</label>
+                        <input type="number" step="0.1" min="0" name="fats" id="fats" value="{{ food.fats }}" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm">
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4 pt-5">
+                    <button type="submit" class="inline-flex justify-center py-2 px-6 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700">
+                        Save Changes
+                    </button>
+                    <a href="{{ url_for('main.manage_foods') }}" class="py-2 px-6 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                        Cancel
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
