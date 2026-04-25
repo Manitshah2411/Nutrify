@@ -16,4 +16,4 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["gunicorn", "-c", "backend/gunicorn.conf.py", "wsgi:application"]
+CMD ["gunicorn", "-c", "backend/gunicorn.conf.py", "backend.wsgi:application"]
