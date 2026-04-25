@@ -9,9 +9,8 @@ COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-RUN chmod +x bin/render_predeploy.sh \
-    && useradd --create-home appuser \
-    && chown -R appuser:appuser /app
+RUN useradd --create-home appuser \
+ && chown -R appuser:appuser /app
 
 USER appuser
 
