@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from flask_wtf.csrf import CSRFError
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+from .bootstrap import bootstrap_database, register_bootstrap_commands
 from .config import DevelopmentConfig, ProductionConfig, TestingConfig, sqlalchemy_engine_options
 from .extensions import bcrypt, csrf, limiter, migrate
 from .models import User, db
@@ -52,6 +54,21 @@ def _configure_cors(app):
     allowed_origins = [origin.strip() for origin in cors_origins.split(',') if origin.strip()]
     if allowed_origins:
         CORS(app, resources={r"/*": {"origins": allowed_origins}}, supports_credentials=True)
+
+
+def _env_flag(name, default):
+    return os.environ.get(name, default).lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _should_auto_bootstrap(app):
+    if app.testing or not _env_flag('AUTO_BOOTSTRAP_DATABASE', '1'):
+        return False
+
+    cli_command = sys.argv[1] if len(sys.argv) > 1 else ''
+    if cli_command in {'db', 'bootstrap-db'}:
+        return False
+
+    return True
 
 
 def _configure_logging(app):
@@ -201,6 +218,7 @@ def create_app(config_class=None):
 
     _configure_security_headers(app)
     _register_error_handlers(app)
+    register_bootstrap_commands(app)
 
     @app.context_processor
     def inject_current_user():
@@ -214,6 +232,10 @@ def create_app(config_class=None):
     from .routes import main as main_blueprint
 
     app.register_blueprint(main_blueprint)
+
+    if _should_auto_bootstrap(app):
+        with app.app_context():
+            bootstrap_database()
 
     app.logger.info("Nutrify application initialized in %s mode", app.config.get('APP_ENV', 'development'))
     return app
