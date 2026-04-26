@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}Jobs - Nutrify{% endblock %}
+{% block nav_jobs %}bg-green-50 text-green-700 shadow-sm ring-1 ring-green-100 transition-colors{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
+    {% include "_flash_messages.html" %}
+    <section class="surface-panel rounded-3xl p-6">
+        <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Background Jobs</p>
+        <h1 class="mt-2 text-3xl font-bold text-gray-900">Queued and completed operations</h1>
+        <div class="mt-6 overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Type</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Status</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Scheduled</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Completed</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200">
+                    {% for job in jobs %}
+                        <tr>
+                            <td class="px-4 py-4 text-sm font-semibold text-gray-900">{{ job.job_type|replace('_', ' ')|title }}</td>
+                            <td class="px-4 py-4 text-sm text-gray-600">{{ job.status|title }}</td>
+                            <td class="px-4 py-4 text-sm text-gray-600">{{ job.scheduled_for.strftime('%d %b %Y %H:%M') if job.scheduled_for else (job.created_at.strftime('%d %b %Y %H:%M') if job.created_at else '') }}</td>
+                            <td class="px-4 py-4 text-sm text-gray-600">{{ job.completed_at.strftime('%d %b %Y %H:%M') if job.completed_at else 'Pending' }}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="4" class="px-4 py-8 text-center text-sm text-gray-500">No jobs found.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+{% endblock %}

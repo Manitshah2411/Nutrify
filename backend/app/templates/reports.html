@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Reports - Nutrify{% endblock %}
+{% block nav_reports %}bg-green-50 text-green-700 shadow-sm ring-1 ring-green-100 transition-colors{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+    {% include "_flash_messages.html" %}
+    <section class="surface-panel rounded-3xl p-6">
+        <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Reports</p>
+        <h1 class="mt-2 text-3xl font-bold text-gray-900">{{ school.school_name or school.username }} reporting hub</h1>
+        <div class="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div class="rounded-2xl bg-gray-50 p-5"><p class="text-sm text-gray-500">Students</p><p class="mt-2 text-3xl font-bold text-gray-900">{{ student_count }}</p></div>
+            <div class="rounded-2xl bg-gray-50 p-5"><p class="text-sm text-gray-500">Meal Plans</p><p class="mt-2 text-3xl font-bold text-gray-900">{{ meal_plan_count }}</p></div>
+            <div class="rounded-2xl bg-gray-50 p-5"><p class="text-sm text-gray-500">Attendance Rows</p><p class="mt-2 text-3xl font-bold text-gray-900">{{ attendance_count }}</p></div>
+            <div class="rounded-2xl bg-gray-50 p-5"><p class="text-sm text-gray-500">Meal Templates</p><p class="mt-2 text-3xl font-bold text-gray-900">{{ template_count }}</p></div>
+        </div>
+    </section>
+
+    <section class="grid gap-8 xl:grid-cols-2">
+        <div class="surface-panel rounded-3xl p-6">
+            <h2 class="text-2xl font-bold text-gray-900">Exports</h2>
+            <div class="mt-6 flex flex-wrap gap-3">
+                <a href="{{ url_for('platform.export_students_report') }}" class="inline-flex rounded-xl bg-green-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700">Export Students CSV</a>
+                <a href="{{ url_for('platform.export_attendance_report') }}" class="inline-flex rounded-xl bg-green-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700">Export Attendance CSV</a>
+                <a href="{{ url_for('platform.export_meals_report') }}" class="inline-flex rounded-xl bg-green-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700">Export Meals CSV</a>
+            </div>
+        </div>
+        <div class="surface-panel rounded-3xl p-6">
+            <h2 class="text-2xl font-bold text-gray-900">Bulk Imports</h2>
+            <div class="mt-6 space-y-6">
+                <form action="{{ url_for('platform.import_students_csv') }}" method="POST" enctype="multipart/form-data" class="space-y-3">
+                    <label class="block text-sm font-semibold text-gray-700">Student roster CSV</label>
+                    <input type="file" name="file" accept=".csv" required class="block w-full text-sm text-gray-700">
+                    <button type="submit" class="inline-flex rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-black">Import Students</button>
+                </form>
+                <form action="{{ url_for('platform.import_attendance_csv') }}" method="POST" enctype="multipart/form-data" class="space-y-3">
+                    <label class="block text-sm font-semibold text-gray-700">Attendance CSV</label>
+                    <input type="file" name="file" accept=".csv" required class="block w-full text-sm text-gray-700">
+                    <button type="submit" class="inline-flex rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-black">Import Attendance</button>
+                </form>
+            </div>
+        </div>
+    </section>
+</div>
+{% endblock %}

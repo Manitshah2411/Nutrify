@@ -50,7 +50,7 @@
 {% endblock %}
 
 {% block content %}
-{% set student = current_user.student_detail %}
+{% set student = student or current_user.portal_student_detail %}
 {% set latest_height = student.latest_height %}
 {% set latest_weight = student.latest_weight %}
 

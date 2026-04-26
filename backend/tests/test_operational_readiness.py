@@ -1,4 +1,8 @@
+import pytest
+from sqlalchemy import inspect, text
+
 from app import create_app
+from app.bootstrap import CURRENT_SCHEMA_REVISION, bootstrap_database
 from app.models import Food, User, db
 from manage import seed_database
 
@@ -15,6 +19,16 @@ class ProductionLikeConfig:
     DEFAULT_SCHOOL_NAME = "The Best School"
     DEFAULT_SCHOOL_PASSWORD = "generated-password"
     SHOW_DEMO_CREDENTIALS = False
+
+
+class InvalidRuntimeConfig:
+    APP_ENV = "development"
+    TESTING = True
+    SECRET_KEY = ""
+    SQLALCHEMY_DATABASE_URI = "not-a-valid-database-url"
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    WTF_CSRF_ENABLED = False
+    RATELIMIT_ENABLED = False
 
 
 def test_seed_database_is_idempotent(app):
@@ -38,3 +52,106 @@ def test_login_page_hides_demo_credentials_in_production():
     assert response.status_code == 200
     assert b"Demo Account" not in response.data
     assert b"school123" not in response.data
+
+
+def test_create_app_rejects_invalid_runtime_configuration():
+    with pytest.raises(RuntimeError):
+        create_app(InvalidRuntimeConfig)
+
+
+def test_bootstrap_repairs_legacy_sqlite_schema(tmp_path):
+    database_path = tmp_path / "legacy-bootstrap.db"
+
+    class LegacySQLiteConfig:
+        APP_ENV = "testing"
+        TESTING = True
+        SECRET_KEY = "legacy-secret"
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{database_path}"
+        SQLALCHEMY_TRACK_MODIFICATIONS = False
+        WTF_CSRF_ENABLED = False
+        RATELIMIT_ENABLED = False
+
+    app = create_app(LegacySQLiteConfig)
+
+    with app.app_context():
+        with db.engine.begin() as connection:
+            connection.execute(text("""
+                CREATE TABLE users (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    username VARCHAR(80) NOT NULL UNIQUE,
+                    password_hash VARCHAR(256) NOT NULL,
+                    role VARCHAR(20) NOT NULL,
+                    school_name VARCHAR(120)
+                )
+            """))
+            connection.execute(text("""
+                CREATE TABLE student_details (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    user_id INTEGER NOT NULL UNIQUE,
+                    school_id INTEGER NOT NULL,
+                    full_name VARCHAR(120) NOT NULL,
+                    roll_no INTEGER NOT NULL,
+                    dob DATE NOT NULL,
+                    sex VARCHAR(10) NOT NULL,
+                    grade INTEGER NOT NULL,
+                    section VARCHAR(10) NOT NULL,
+                    activity_level VARCHAR(50),
+                    allergies TEXT
+                )
+            """))
+            connection.execute(text("""
+                CREATE TABLE health_metrics (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    student_id INTEGER NOT NULL,
+                    record_date DATE NOT NULL,
+                    height_cm FLOAT NOT NULL,
+                    weight_kg FLOAT NOT NULL
+                )
+            """))
+            connection.execute(text("""
+                CREATE TABLE attendance (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    student_id INTEGER NOT NULL,
+                    attendance_date DATE NOT NULL,
+                    ate_breakfast BOOLEAN NOT NULL,
+                    ate_lunch BOOLEAN NOT NULL,
+                    ate_dinner BOOLEAN NOT NULL
+                )
+            """))
+            connection.execute(text("""
+                CREATE TABLE food (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL UNIQUE,
+                    calories FLOAT NOT NULL,
+                    protein FLOAT NOT NULL,
+                    carbs FLOAT NOT NULL,
+                    fats FLOAT NOT NULL
+                )
+            """))
+            connection.execute(text("""
+                CREATE TABLE meal_plan (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    school_id INTEGER NOT NULL,
+                    plan_date DATE NOT NULL
+                )
+            """))
+            connection.execute(text("""
+                CREATE TABLE meal_plan_item (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    meal_plan_id INTEGER NOT NULL,
+                    food_id INTEGER NOT NULL,
+                    meal_type VARCHAR(20) NOT NULL
+                )
+            """))
+
+        result = bootstrap_database()
+        inspector = inspect(db.engine)
+
+        assert result["legacy_schema_repaired"] is True
+        assert result["school_created"] is True
+        assert User.query.filter_by(username="BestSchool").one_or_none() is not None
+        assert Food.query.count() == 8
+        assert "email" in {column["name"] for column in inspector.get_columns("users")}
+        assert "is_deleted" in {column["name"] for column in inspector.get_columns("users")}
+        assert inspector.has_table("notifications")
+        assert db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == CURRENT_SCHEMA_REVISION

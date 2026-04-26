@@ -14,7 +14,7 @@ on:
       - "backend/**"
       - "render.yaml"
 
-jobs:
+obs:
   test:
     runs-on: ubuntu-latest
     defaults:

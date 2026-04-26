@@ -10,6 +10,7 @@
 {% endblock %}
 
 {% block content %}
+{% set student = student or current_user.portal_student_detail %}
 {% set todays_item_count = todays_plan.items|length if todays_plan and todays_plan.items else 0 %}
 
 <section class="page-atmosphere border-b border-gray-200">
@@ -22,7 +23,7 @@
         <div class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-end">
             <div>
                 <p class="text-sm font-semibold uppercase tracking-[0.18em] text-green-700">Student Dashboard</p>
-                <h1 class="mt-3 text-4xl font-extrabold tracking-tight text-gray-900 sm:text-5xl">Welcome back, {{ current_user.student_detail.full_name }}.</h1>
+                <h1 class="mt-3 text-4xl font-extrabold tracking-tight text-gray-900 sm:text-5xl">Welcome back, {{ student.full_name }}.</h1>
                 <p class="mt-4 max-w-2xl text-base leading-7 text-gray-600 sm:text-lg">
                     Track today&apos;s meals, review your nutrition trends, and keep your school health data in one clear workspace.
                 </p>
@@ -39,7 +40,7 @@
                     </div>
                     <div class="glass-panel rounded-2xl p-4">
                         <p class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">BMI</p>
-                        <p class="mt-2 text-2xl font-bold text-gray-900">{% if current_user.student_detail.bmi %}{{ "%.1f"|format(current_user.student_detail.bmi) }}{% else %}N/A{% endif %}</p>
+                        <p class="mt-2 text-2xl font-bold text-gray-900">{% if student.bmi %}{{ "%.1f"|format(student.bmi) }}{% else %}N/A{% endif %}</p>
                         <p class="mt-1 text-sm text-gray-600">Latest calculated value</p>
                     </div>
                 </div>
@@ -136,10 +137,10 @@
             <div class="surface-panel rounded-3xl p-6">
                 <h2 class="text-lg font-semibold text-gray-800 mb-4">Health Stats</h2>
                 <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                    <div><p class="text-sm text-gray-500">Age</p><p class="text-lg font-semibold">{{ current_user.student_detail.age }} years</p></div>
-                    <div><p class="text-sm text-gray-500">Height</p><p class="text-lg font-semibold">{{ current_user.student_detail.latest_height or 'N/A' }} cm</p></div>
-                    <div><p class="text-sm text-gray-500">Weight</p><p class="text-lg font-semibold">{{ current_user.student_detail.latest_weight or 'N/A' }} kg</p></div>
-                    <div><p class="text-sm text-gray-500">BMI</p><p class="text-lg font-semibold">{% if current_user.student_detail.bmi %}{{ "%.1f"|format(current_user.student_detail.bmi) }}{% else %}N/A{% endif %}</p></div>
+                    <div><p class="text-sm text-gray-500">Age</p><p class="text-lg font-semibold">{{ student.age }} years</p></div>
+                    <div><p class="text-sm text-gray-500">Height</p><p class="text-lg font-semibold">{{ student.latest_height or 'N/A' }} cm</p></div>
+                    <div><p class="text-sm text-gray-500">Weight</p><p class="text-lg font-semibold">{{ student.latest_weight or 'N/A' }} kg</p></div>
+                    <div><p class="text-sm text-gray-500">BMI</p><p class="text-lg font-semibold">{% if student.bmi %}{{ "%.1f"|format(student.bmi) }}{% else %}N/A{% endif %}</p></div>
                 </div>
             </div>
 

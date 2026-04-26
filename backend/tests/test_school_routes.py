@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from werkzeug.security import generate_password_hash as generate_legacy_password_hash
 
 from app import routes
-from app.models import Attendance, MealPlan, MealPlanItem, StudentDetail, User, db
+from app.models import ApprovalRequest, Attendance, MealPlan, MealPlanItem, MealTemplate, MealTemplateItem, Notification, StudentDetail, User, db
 from conftest import create_food, create_school, create_student, login
 
 
@@ -60,6 +60,26 @@ def test_create_meal_plan_rejects_past_date(client, app):
         assert MealPlan.query.count() == 0
 
 
+def test_create_meal_plan_rejects_invalid_food_ids(client, app):
+    with app.app_context():
+        create_school()
+
+    login(client)
+    response = client.post(
+        "/create-meal-plan",
+        data={
+            "plan_date": date.today().isoformat(),
+            "breakfast_foods": ["not-a-number"],
+        },
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert b"Food selection must be a whole number." in response.data
+    with app.app_context():
+        assert MealPlan.query.count() == 0
+
+
 def test_add_student_rejects_students_younger_than_five(client, app):
     with app.app_context():
         create_school()
@@ -85,6 +105,38 @@ def test_add_student_rejects_students_younger_than_five(client, app):
     with app.app_context():
         assert User.query.filter_by(username="too-young").first() is None
         assert StudentDetail.query.count() == 0
+
+
+def test_delete_student_handles_missing_student_detail_gracefully(client, app):
+    with app.app_context():
+        create_school()
+        orphan_student = User(username="orphan-student", role="student")
+        orphan_student.set_password("secret123")
+        db.session.add(orphan_student)
+        db.session.commit()
+        orphan_user_id = orphan_student.id
+
+    login(client)
+    response = client.post(f"/delete-student/{orphan_user_id}", follow_redirects=True)
+
+    assert response.status_code == 200
+    assert b"Student record is incomplete or missing." in response.data
+
+
+def test_edit_student_handles_missing_student_detail_gracefully(client, app):
+    with app.app_context():
+        create_school()
+        orphan_student = User(username="orphan-edit", role="student")
+        orphan_student.set_password("secret123")
+        db.session.add(orphan_student)
+        db.session.commit()
+        orphan_user_id = orphan_student.id
+
+    login(client)
+    response = client.get(f"/edit-student/{orphan_user_id}", follow_redirects=True)
+
+    assert response.status_code == 200
+    assert b"Student record is incomplete or missing." in response.data
 
 
 def test_save_attendance_rejects_future_date(client, app):
@@ -154,6 +206,25 @@ def test_save_attendance_requires_today_meal_plan(client, app):
     assert response.status_code == 200
     with app.app_context():
         assert Attendance.query.count() == 0
+
+
+def test_save_attendance_rejects_non_list_payload(client, app):
+    with app.app_context():
+        school = create_school()
+        create_student(school)
+
+    login(client)
+    response = client.post(
+        "/save-attendance",
+        data={
+            "attendance_date": date.today().isoformat(),
+            "attendance_data": json.dumps({"bad": "payload"}),
+        },
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert b"Attendance data was invalid." in response.data
 
 
 def test_save_attendance_ignores_students_from_other_schools(client, app):
@@ -260,6 +331,20 @@ def test_student_dashboard_renders_for_students_with_legacy_password_hash(client
         assert updated_student.password_hash.startswith("$2")
 
 
+def test_dashboard_handles_unsupported_role_without_500(client, app):
+    with app.app_context():
+        unsupported_user = User(username="platform-admin", role="admin")
+        unsupported_user.set_password("secret123")
+        db.session.add(unsupported_user)
+        db.session.commit()
+
+    login(client, username="platform-admin")
+    response = client.get("/dashboard", follow_redirects=True)
+
+    assert response.status_code == 200
+    assert b"Platform Console" in response.data
+
+
 def test_school_insights_page_renders_for_schools(client, app):
     with app.app_context():
         create_school()
@@ -294,6 +379,35 @@ def test_recipe_finder_redirects_students_to_meal_plan(client, app):
 
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/meal-generator")
+
+
+def test_get_nutrition_data_returns_student_history_payload(client, app):
+    with app.app_context():
+        school = create_school()
+        student = create_student(school)
+        food = create_food(name="History Apple")
+        plan = MealPlan(school_id=school.id, plan_date=date.today())
+        db.session.add(plan)
+        db.session.flush()
+        db.session.add(MealPlanItem(meal_plan_id=plan.id, food_id=food.id, meal_type="Breakfast"))
+        db.session.add(
+            Attendance(
+                student_id=student.student_detail.id,
+                attendance_date=date.today(),
+                ate_breakfast=True,
+                ate_lunch=False,
+                ate_dinner=False,
+            )
+        )
+        db.session.commit()
+
+    login(client, username="student")
+    response = client.get(f"/get-nutrition-data/{date.today().isoformat()}")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["daily_nutrition"]["calories"] > 0
+    assert "History Apple" in payload["meal_plan"]["Breakfast"][0]
 
 
 def test_meal_generator_page_keeps_recipe_finder_and_removes_nutrition_explorer(client, app):
@@ -544,3 +658,205 @@ def test_health_route_is_public(client):
     payload = response.get_json()
     assert payload["status"] == "ok"
     assert payload["service"] == "nutrify"
+
+
+def test_change_password_updates_credentials(client, app):
+    with app.app_context():
+        create_school()
+
+    login(client)
+    response = client.post(
+        "/account/change-password",
+        data={
+            "current_password": "secret123",
+            "new_password": "newsecret123",
+            "confirm_password": "newsecret123",
+        },
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    client.post("/logout")
+    login_response = client.post(
+        "/login",
+        data={"username": "school", "password": "newsecret123"},
+        follow_redirects=True,
+    )
+    assert login_response.status_code == 200
+    assert b"School Dashboard" in login_response.data
+
+
+def test_password_reset_request_and_completion_flow(client, app):
+    with app.app_context():
+        school = create_school()
+        school.email = "school@example.com"
+        db.session.commit()
+
+    response = client.post(
+        "/password-reset/request",
+        data={"identifier": "school"},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert b"/password-reset/" in response.data
+    reset_link = response.data.decode("utf-8").split("/password-reset/")[1].split('"')[0]
+
+    reset_response = client.post(
+        f"/password-reset/{reset_link}",
+        data={"new_password": "resetsecret123", "confirm_password": "resetsecret123"},
+        follow_redirects=True,
+    )
+
+    assert reset_response.status_code == 200
+    login_response = client.post(
+        "/login",
+        data={"username": "school", "password": "resetsecret123"},
+        follow_redirects=True,
+    )
+    assert login_response.status_code == 200
+    assert b"School Dashboard" in login_response.data
+
+
+def test_staff_management_creates_staff_account(client, app):
+    with app.app_context():
+        school = create_school()
+        school_id = school.id
+
+    login(client)
+    response = client.post(
+        "/staff",
+        data={
+            "account_type": "staff",
+            "full_name": "Operations Lead",
+            "email": "ops@example.com",
+            "username": "ops-lead",
+            "password": "secret1234",
+            "can_manage_students": "on",
+            "can_manage_meals": "on",
+            "can_view_reports": "on",
+        },
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    with app.app_context():
+        staff = User.query.filter_by(username="ops-lead").first()
+        assert staff is not None
+        assert staff.school_id == school_id
+        assert staff.can_manage_students is True
+        assert staff.can_manage_meals is True
+
+
+def test_meal_template_apply_creates_recurring_plans(client, app):
+    with app.app_context():
+        create_school()
+        food = create_food()
+        food_id = food.id
+
+    login(client)
+    response = client.post(
+        "/meal-templates",
+        data={
+            "name": "Weekday Template",
+            "description": "Standard week",
+            "breakfast_foods": [str(food_id)],
+            "lunch_foods": [str(food_id)],
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+
+    with app.app_context():
+        template = MealTemplate.query.filter_by(name="Weekday Template").first()
+        assert template is not None
+        template_id = template.id
+
+    apply_response = client.post(
+        f"/meal-templates/{template_id}/apply",
+        data={
+            "start_date": date.today().isoformat(),
+            "recurrence_count": "2",
+            "recurrence": "weekly",
+        },
+        follow_redirects=True,
+    )
+    assert apply_response.status_code == 200
+    with app.app_context():
+        plans = MealPlan.query.order_by(MealPlan.plan_date.asc()).all()
+        assert len(plans) == 2
+        assert plans[0].status == "approved"
+        assert plans[1].status == "approved"
+
+
+def test_staff_meal_plan_submission_creates_approval_and_can_be_approved(client, app):
+    with app.app_context():
+        school = create_school()
+        food = create_food()
+        food_id = food.id
+        template = MealTemplate(
+            school_id=school.id,
+            name="Staff Template",
+            description="Pending approval template",
+            created_by_user_id=school.id,
+        )
+        db.session.add(template)
+        db.session.flush()
+        db.session.add(MealTemplateItem(template_id=template.id, food_id=food_id, meal_type="Breakfast"))
+        staff = User(
+            username="meal-staff",
+            role=User.ROLE_SCHOOL_ADMIN,
+            school_id=school.id,
+            full_name="Meal Staff",
+            can_manage_meals=True,
+            can_approve_workflows=False,
+        )
+        staff.set_password("secret1234")
+        db.session.add(staff)
+        db.session.commit()
+        template_id = template.id
+
+    login(client, username="meal-staff", password="secret1234")
+    submit_response = client.post(
+        f"/meal-templates/{template_id}/apply",
+        data={"start_date": date.today().isoformat(), "recurrence_count": "1", "recurrence": "daily"},
+        follow_redirects=True,
+    )
+    assert submit_response.status_code == 200
+
+    with app.app_context():
+        plan = MealPlan.query.first()
+        approval = ApprovalRequest.query.first()
+        assert plan is not None
+        assert plan.status == "pending"
+        assert approval is not None
+        approval_id = approval.id
+
+    client.post("/logout")
+    login(client)
+    approve_response = client.post(
+        f"/approvals/{approval_id}/approve",
+        follow_redirects=True,
+    )
+    assert approve_response.status_code == 200
+    with app.app_context():
+        plan = MealPlan.query.first()
+        assert plan.status == "approved"
+
+
+def test_feedback_submission_creates_notification_for_school(client, app):
+    with app.app_context():
+        school = create_school()
+        create_student(school)
+
+    login(client, username="student")
+    response = client.post(
+        "/feedback",
+        data={"subject": "Lunch feedback", "message": "The lunch menu was great today."},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    with app.app_context():
+        school_notifications = Notification.query.filter(Notification.title == "New portal feedback").all()
+        assert school_notifications

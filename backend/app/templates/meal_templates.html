@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}Meal Templates - Nutrify{% endblock %}
+{% block nav_reports %}bg-green-50 text-green-700 shadow-sm ring-1 ring-green-100 transition-colors{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+    {% include "_flash_messages.html" %}
+    <section class="surface-panel rounded-3xl p-6">
+        <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Meal Templates</p>
+        <h1 class="mt-2 text-3xl font-bold text-gray-900">Create reusable meal structures</h1>
+        <form method="POST" class="mt-6 space-y-6">
+            <div class="grid gap-4 md:grid-cols-2">
+                <div><label class="block text-sm font-semibold text-gray-700">Template Name</label><input name="name" required class="mt-3 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500"></div>
+                <div><label class="block text-sm font-semibold text-gray-700">Description</label><input name="description" class="mt-3 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500"></div>
+            </div>
+            <div class="grid gap-6 xl:grid-cols-3">
+                {% for meal_type in ['breakfast', 'lunch', 'dinner'] %}
+                    <div class="rounded-2xl border border-gray-200 bg-gray-50/70 p-5">
+                        <h2 class="text-lg font-bold text-gray-900">{{ meal_type|title }}</h2>
+                        <div class="mt-4 max-h-72 overflow-y-auto space-y-3">
+                            {% for food in foods %}
+                                <label class="flex items-start gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
+                                    <input type="checkbox" name="{{ meal_type }}_foods" value="{{ food.id }}" class="mt-1 h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500">
+                                    <span class="text-sm"><span class="block font-semibold text-gray-900">{{ food.name }}</span><span class="mt-1 block text-xs text-gray-500">{{ food.calories }} kcal</span></span>
+                                </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+            <div class="flex justify-end"><button type="submit" class="inline-flex rounded-xl bg-green-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700">Save Template</button></div>
+        </form>
+    </section>
+
+    <section class="surface-panel rounded-3xl p-6">
+        <h2 class="text-2xl font-bold text-gray-900">Existing templates</h2>
+        <div class="mt-6 space-y-4">
+            {% for template in templates %}
+                <div class="rounded-2xl border border-gray-200 bg-white p-5">
+                    <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                            <p class="text-lg font-bold text-gray-900">{{ template.name }}</p>
+                            <p class="mt-1 text-sm text-gray-600">{{ template.description or 'No description' }}</p>
+                            <p class="mt-2 text-xs text-gray-500">{{ template.items|length }} items</p>
+                        </div>
+                        <div class="flex flex-wrap gap-3">
+                            <form method="POST" action="{{ url_for('platform.clone_meal_template', template_id=template.id) }}"><button type="submit" class="inline-flex rounded-xl bg-gray-100 px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-200">Clone</button></form>
+                            <form method="POST" action="{{ url_for('platform.apply_meal_template', template_id=template.id) }}" class="flex flex-wrap items-end gap-3">
+                                <div><label class="block text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Start</label><input type="date" name="start_date" value="{{ today.isoformat() }}" class="mt-2 rounded-xl border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-green-500 focus:ring-green-500"></div>
+                                <div><label class="block text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Count</label><input type="number" name="recurrence_count" value="1" min="1" max="12" class="mt-2 w-24 rounded-xl border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-green-500 focus:ring-green-500"></div>
+                                <div><label class="block text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Frequency</label><select name="recurrence" class="mt-2 rounded-xl border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-green-500 focus:ring-green-500"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></div>
+                                <button type="submit" class="inline-flex rounded-xl bg-green-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700">Apply</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            {% else %}
+                <p class="text-sm text-gray-500">No templates created yet.</p>
+            {% endfor %}
+        </div>
+    </section>
+</div>
+{% endblock %}

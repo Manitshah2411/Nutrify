@@ -73,13 +73,23 @@
                         <!-- Links for LOGGED-IN users -->
                         <a href="{{ url_for('main.dashboard') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_dashboard %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Dashboard</a>
                         
-                        {% if current_user.role == 'school' %}
+                        {% if current_user.normalized_role == 'school_admin' %}
                             <a href="{{ url_for('main.insights') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_insights %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Insights</a>
-                        {% elif current_user.role == 'student' %}
+                            <a href="{{ url_for('platform.staff_management') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_staff %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Staff</a>
+                            <a href="{{ url_for('platform.reports_dashboard') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_reports %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Reports</a>
+                            <a href="{{ url_for('platform.approvals_dashboard') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_approvals %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Approvals</a>
+                        {% elif current_user.normalized_role == 'master_admin' %}
+                            <a href="{{ url_for('platform.platform_dashboard') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_platform %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Platform</a>
+                            <a href="{{ url_for('platform.activity_logs') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_activity %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Activity</a>
+                            <a href="{{ url_for('platform.jobs_dashboard') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_jobs %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Jobs</a>
+                        {% elif current_user.normalized_role == 'user' %}
                             <a href="{{ url_for('main.meal_generator') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_meal %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Meal Plan</a>
                             <a href="{{ url_for('main.health_form') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_health %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Health Form</a>
                             <a href="{{ url_for('main.awareness_page') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_awareness %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Health Awareness</a>
+                            <a href="{{ url_for('platform.feedback_portal') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_feedback %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Feedback</a>
                         {% endif %}
+                        <a href="{{ url_for('platform.notifications_dashboard') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_notifications %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Notifications</a>
+                        <a href="{{ url_for('platform.change_password') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_account %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Account</a>
                         
                         <form action="{{ url_for('main.logout') }}" method="POST" class="ml-2 inline">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

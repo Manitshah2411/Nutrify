@@ -8,6 +8,7 @@ from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
 from flask_login import LoginManager, current_user
 from flask_wtf.csrf import CSRFError
+from sqlalchemy.engine import make_url
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -15,6 +16,8 @@ from .bootstrap import bootstrap_database, register_bootstrap_commands
 from .config import DevelopmentConfig, ProductionConfig, TestingConfig, sqlalchemy_engine_options
 from .extensions import bcrypt, csrf, limiter, migrate
 from .models import User, db
+from .observability import capture_exception, init_error_tracking
+from .security import register_security_hooks
 
 
 logger = logging.getLogger(__name__)
@@ -29,7 +32,10 @@ login_manager.session_protection = 'strong'
 def load_user(user_id):
     """Load the current user from the database."""
     try:
-        return db.session.get(User, int(user_id))
+        user = db.session.get(User, int(user_id))
+        if user is None or getattr(user, 'is_deleted', False):
+            return None
+        return user
     except (TypeError, ValueError):
         return None
 
@@ -69,6 +75,25 @@ def _should_auto_bootstrap(app):
         return False
 
     return True
+
+
+def _validate_runtime_configuration(app):
+    secret_key = (app.config.get("SECRET_KEY") or "").strip()
+    if not secret_key:
+        raise RuntimeError("SECRET_KEY is required.")
+
+    database_uri = (app.config.get("SQLALCHEMY_DATABASE_URI") or "").strip()
+    if not database_uri:
+        raise RuntimeError("DATABASE_URL is required.")
+
+    try:
+        make_url(database_uri)
+    except Exception as exc:
+        raise RuntimeError("DATABASE_URL is invalid or unsupported.") from exc
+
+    app_env = str(app.config.get("APP_ENV", "")).lower()
+    if app_env in {"production", "prod"} and not app.testing and database_uri.startswith("sqlite"):
+        raise RuntimeError("SQLite is not allowed in production. Set DATABASE_URL to PostgreSQL.")
 
 
 def _configure_logging(app):
@@ -149,6 +174,7 @@ def _register_error_handlers(app):
 
         db.session.rollback()
         app.logger.exception("Unhandled exception while processing %s %s", request.method, request.path)
+        capture_exception(error, context={"path": request.path, "method": request.method})
         return _render_error_response(
             500,
             'Internal server error',
@@ -190,16 +216,8 @@ def create_app(config_class=None):
 
     app = Flask(__name__)
     app.config.from_object(selected_config)
+    _validate_runtime_configuration(app)
     app.config["SQLALCHEMY_ENGINE_OPTIONS"] = sqlalchemy_engine_options(app.config["SQLALCHEMY_DATABASE_URI"])
-
-    if selected_config is ProductionConfig:
-        if not os.environ.get('SECRET_KEY'):
-            raise RuntimeError('SECRET_KEY is required in production.')
-        database_url = os.environ.get('DATABASE_URL', '')
-        if not database_url:
-            raise RuntimeError('DATABASE_URL is required in production.')
-        if database_url.startswith('sqlite'):
-            raise RuntimeError('SQLite is not allowed in production. Set DATABASE_URL to PostgreSQL.')
 
     if os.environ.get('ENABLE_PROXY_FIX', '1' if selected_config is ProductionConfig else '0').lower() in {'1', 'true', 'yes'}:
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
@@ -218,6 +236,8 @@ def create_app(config_class=None):
     )
     limiter.init_app(app)
     login_manager.init_app(app)
+    register_security_hooks(app)
+    init_error_tracking(app)
 
     _configure_security_headers(app)
     _register_error_handlers(app)
@@ -233,8 +253,10 @@ def create_app(config_class=None):
 
     # Register the blueprint that contains all our routes
     from .routes import main as main_blueprint
+    from .platform_routes import platform as platform_blueprint
 
     app.register_blueprint(main_blueprint)
+    app.register_blueprint(platform_blueprint)
 
     if _should_auto_bootstrap(app):
         with app.app_context():

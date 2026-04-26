@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}Activity Logs - Nutrify{% endblock %}
+{% block nav_activity %}bg-green-50 text-green-700 shadow-sm ring-1 ring-green-100 transition-colors{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
+    {% include "_flash_messages.html" %}
+    <section class="surface-panel rounded-3xl p-6">
+        <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Audit Trail</p>
+        <h1 class="mt-2 text-3xl font-bold text-gray-900">Recent system activity</h1>
+        <div class="mt-6 overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">When</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Action</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Entity</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200">
+                    {% for log in logs %}
+                        <tr>
+                            <td class="px-4 py-4 text-sm text-gray-600">{{ log.created_at.strftime('%d %b %Y %H:%M') if log.created_at else '' }}</td>
+                            <td class="px-4 py-4 text-sm font-semibold text-gray-900">{{ log.action|replace('_', ' ')|title }}</td>
+                            <td class="px-4 py-4 text-sm text-gray-600">{{ log.entity_type }}{% if log.entity_id %} #{{ log.entity_id }}{% endif %}</td>
+                            <td class="px-4 py-4 text-sm text-gray-600">{{ log.status|title }}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="4" class="px-4 py-8 text-center text-sm text-gray-500">No audit logs found.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+{% endblock %}

@@ -12,8 +12,24 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_user, logout_user, login_required, current_user
 import requests
 from sqlalchemy import func, or_, extract, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
-from .models import db, User, Food, MealPlan, MealPlanItem, StudentDetail, Attendance, HealthMetric
+from .ai_usage import add_ai_usage_log, check_ai_quota, estimate_request_units
+from .audit import add_audit_log
+from .models import (
+    db,
+    User,
+    Food,
+    MealPlan,
+    MealPlanItem,
+    StudentDetail,
+    Attendance,
+    HealthMetric,
+    ApprovalRequest,
+    utcnow,
+)
+from .notifications import broadcast_school_notification
+from .security import establish_session
 from .extensions import bcrypt, limiter # Imported from File 1 for password hashing
 
 # --- AI Model Initialization (from File 1) ---
@@ -336,21 +352,22 @@ FALLBACK_MEAL_LIBRARY = {
     },
 }
 
-def _find_exact_food(food_name):
+def _find_exact_food(food_name, school_scope_id=None):
     normalized_name = _normalize_food_query(food_name)
     if not normalized_name:
         return None
 
-    return Food.query.filter(func.lower(Food.name) == normalized_name.lower()).first()
+    return _school_food_query(school_scope_id).filter(func.lower(Food.name) == normalized_name.lower()).first()
 
-def _search_local_foods(query, limit=6):
+def _search_local_foods(query, limit=6, school_scope_id=None):
     normalized_query = _normalize_food_query(query)
     if not normalized_query:
         return []
 
-    exact_matches = Food.query.filter(func.lower(Food.name) == normalized_query.lower()).order_by(Food.name).all()
+    food_query = _school_food_query(school_scope_id)
+    exact_matches = food_query.filter(func.lower(Food.name) == normalized_query.lower()).order_by(Food.name).all()
     partial_matches = (
-        Food.query.filter(Food.name.ilike(f"%{normalized_query}%"))
+        food_query.filter(Food.name.ilike(f"%{normalized_query}%"))
         .order_by(Food.name)
         .limit(limit)
         .all()
@@ -750,11 +767,240 @@ def _parse_form_date(field_name):
         return None
 
 
+def _school_scope_id():
+    return getattr(current_user, 'school_scope_id', None) or getattr(current_user, 'id', None)
+
+
+def _active_school_account():
+    school_scope_id = _school_scope_id()
+    if not school_scope_id:
+        return None
+    return db.session.get(User, school_scope_id)
+
+
+def _school_food_query(school_scope_id=None):
+    resolved_school_id = school_scope_id or _school_scope_id()
+    if not resolved_school_id:
+        return Food.query.filter(Food.school_id.is_(None))
+    return Food.query.filter(or_(Food.school_id == resolved_school_id, Food.school_id.is_(None)))
+
+
+def _school_food_ids(food_ids, school_scope_id=None):
+    if not food_ids:
+        return set()
+
+    return {
+        food_id
+        for (food_id,) in _school_food_query(school_scope_id)
+        .with_entities(Food.id)
+        .filter(Food.id.in_(set(food_ids)))
+        .all()
+    }
+
+
+def _log_ai_usage(user, feature, status, *, request_units=0, latency_ms=None, details=None):
+    try:
+        add_ai_usage_log(
+            user,
+            feature,
+            status=status,
+            request_units=request_units,
+            latency_ms=latency_ms,
+            details=details,
+        )
+        db.session.commit()
+    except Exception:
+        _rollback_session()
+        logger.exception("Failed to persist AI usage log for feature=%s status=%s", feature, status)
+
+
+def _rollback_session():
+    try:
+        db.session.rollback()
+    except Exception:
+        logger.exception("Database rollback failed.")
+
+
+def _commit_session(action_label):
+    try:
+        db.session.commit()
+        logger.info("%s completed successfully", action_label)
+        return True
+    except SQLAlchemyError:
+        _rollback_session()
+        logger.exception("%s failed during database commit", action_label)
+        return False
+
+
+def _parse_positive_int(value, field_label, minimum=1):
+    try:
+        parsed_value = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_label} must be a whole number.") from exc
+
+    if parsed_value < minimum:
+        raise ValueError(f"{field_label} must be at least {minimum}.")
+    return parsed_value
+
+
+def _parse_food_ids(form_values):
+    parsed_ids = []
+    for value in form_values:
+        if value in {None, ''}:
+            continue
+        parsed_ids.append(_parse_positive_int(value, "Food selection"))
+    return parsed_ids
+
+
+def _validate_food_ids(food_ids, school_scope_id=None):
+    if not food_ids:
+        return True
+
+    existing_ids = _school_food_ids(food_ids, school_scope_id)
+    missing_ids = [food_id for food_id in food_ids if food_id not in existing_ids]
+    if missing_ids:
+        logger.warning("Rejected meal plan submission with missing food ids: %s", missing_ids)
+        return False
+    return True
+
+
+def _group_plan_meals(plan):
+    grouped_meals = {
+        'Breakfast': [],
+        'Lunch': [],
+        'Dinner': [],
+    }
+    if not plan or not getattr(plan, 'items', None):
+        return grouped_meals
+
+    for item in plan.items:
+        food = getattr(item, 'food', None)
+        if food is None:
+            logger.warning(
+                "Meal plan item %s in plan %s references a missing food record.",
+                getattr(item, 'id', None),
+                getattr(plan, 'id', None),
+            )
+            continue
+
+        grouped_meals.setdefault(item.meal_type, []).append({
+            'name': food.name,
+            'calories': food.calories,
+        })
+
+    return grouped_meals
+
+
+def _meal_plan_history_payload(plan):
+    grouped_meals = _group_plan_meals(plan)
+    payload = {}
+    for meal_type, items in grouped_meals.items():
+        payload[meal_type] = [
+            f"{item['name']} ({item['calories']} kcal)"
+            for item in items
+        ]
+    return payload
+
+
+def _default_school_summary():
+    return {
+        'student_count': 0,
+        'food_count': 0,
+        'upcoming_plan_count': 0,
+        'today_plan_item_count': 0,
+        'attendance_marked_today': 0,
+        'students_served_today': 0,
+        'attendance_completion_percent': 0,
+        'attendance_enabled': False,
+    }
+
+
+def _empty_school_dashboard_context(today):
+    return {
+        'user': current_user,
+        'school_account': _active_school_account(),
+        'all_foods': [],
+        'upcoming_plans': [],
+        'today': today,
+        'max_student_dob': _max_student_dob(today),
+        'students': [],
+        'students_for_attendance': [],
+        'school_summary': _default_school_summary(),
+        'attendance_enabled': False,
+    }
+
+
+def _empty_student_dashboard_context(today):
+    return {
+        'user': current_user,
+        'today': today,
+        'todays_plan': None,
+        'daily_nutrition': {'calories': 0, 'protein': 0, 'carbs': 0, 'fats': 0},
+        'recommended_values': {'calories': 2000, 'protein': 50, 'carbs': 300, 'fats': 70},
+        'nutrition_percentages': {'calories': 0, 'protein': 0, 'carbs': 0, 'fats': 0},
+        'meal_type_totals': {
+            'Breakfast': {'calories': 0},
+            'Lunch': {'calories': 0},
+            'Dinner': {'calories': 0},
+        },
+        'weekly_nutrition': [
+            {'day': (today - timedelta(days=i)).strftime('%a'), 'calories': 0, 'protein': 0, 'carbs': 0, 'fats': 0}
+            for i in range(6, -1, -1)
+        ],
+        'weekly_averages': {'calories': 0, 'protein': 0, 'carbs': 0, 'fats': 0},
+        'attendance_percentage': 0,
+        'recent_absences': [],
+    }
+
+
+def _empty_insights_context(today):
+    return {
+        'total_students': 0,
+        'attendance_today_percent': 0,
+        'avg_weekly_attendance_percent': 0,
+        'total_meals_this_month': 0,
+        'attendance_labels': [(today - timedelta(days=i)).strftime('%a %d') for i in range(6, -1, -1)],
+        'attendance_data': [0] * 7,
+        'meal_distribution_data': [0, 0, 0],
+        'nutrition_compliance_labels': [],
+        'nutrition_compliance_data': [],
+        'health_impact_data': [
+            {'metric': 'BMI Improvement %', 'current_value': 'N/A', 'change': 'N/A'},
+            {'metric': 'Attendance Rise', 'current_value': '0%', 'change': 'N/A'},
+        ],
+        'class_insights': [],
+    }
+
+
+def _get_school_owned_student_user(user_id):
+    student_user = db.session.get(User, user_id)
+    if student_user is None:
+        flash('Student account not found.', 'danger')
+        return None, None
+
+    student_detail = getattr(student_user, 'student_detail', None)
+    if student_detail is None:
+        logger.warning(
+            "School %s attempted to manage user %s without an attached student detail record.",
+            getattr(current_user, 'id', None),
+            user_id,
+        )
+        flash('Student record is incomplete or missing.', 'danger')
+        return None, None
+
+    if student_detail.school_id != _school_scope_id():
+        flash('You do not have permission to manage this student.', 'danger')
+        return None, None
+
+    return student_user, student_detail
+
+
 def _student_detail_or_logout():
-    student_detail = getattr(current_user, 'student_detail', None)
+    student_detail = getattr(current_user, 'portal_student_detail', None)
     if student_detail:
         return student_detail
 
+    logger.warning("Student user %s is missing a student_detail record. Logging out.", getattr(current_user, 'id', None))
     flash('Student details not found.', 'danger')
     logout_user()
     return None
@@ -787,6 +1033,25 @@ def health():
 # --- HELPER FUNCTION (from File 2) ---
 def _get_student_nutrition_data(student_detail, target_date):
     """A helper function to calculate all nutrition data for a student on a specific date."""
+    if not student_detail:
+        logger.warning("Nutrition data requested without a student detail for date %s", target_date)
+        return {
+            "meal_plan": None,
+            "daily_nutrition": {'calories': 0, 'protein': 0, 'carbs': 0, 'fats': 0},
+            "recommended_values": {'calories': 2000, 'protein': 50, 'carbs': 300, 'fats': 70},
+            "nutrition_percentages": {'calories': 0, 'protein': 0, 'carbs': 0, 'fats': 0},
+            "meal_type_totals": {
+                'Breakfast': {'calories': 0},
+                'Lunch': {'calories': 0},
+                'Dinner': {'calories': 0}
+            },
+            "weekly_nutrition": [
+                {'day': (target_date - timedelta(days=i)).strftime('%a'), 'calories': 0, 'protein': 0, 'carbs': 0, 'fats': 0}
+                for i in range(6, -1, -1)
+            ],
+            "weekly_averages": {'calories': 0, 'protein': 0, 'carbs': 0, 'fats': 0},
+        }
+
     school_id = student_detail.school_id
     
     # 1. Daily Data
@@ -805,18 +1070,26 @@ def _get_student_nutrition_data(student_detail, target_date):
 
     if meal_plan and attendance:
         for item in meal_plan.items:
+            food = getattr(item, 'food', None)
+            if food is None:
+                logger.warning(
+                    "Skipping meal plan item %s for student %s because the food record is missing.",
+                    getattr(item, 'id', None),
+                    getattr(student_detail, 'id', None),
+                )
+                continue
             ate_meal = False
             if item.meal_type == 'Breakfast' and attendance.ate_breakfast: ate_meal = True
             elif item.meal_type == 'Lunch' and attendance.ate_lunch: ate_meal = True
             elif item.meal_type == 'Dinner' and attendance.ate_dinner: ate_meal = True
             
             if ate_meal:
-                daily_nutrition['calories'] += item.food.calories
-                daily_nutrition['protein'] += item.food.protein
-                daily_nutrition['carbs'] += item.food.carbs
-                daily_nutrition['fats'] += item.food.fats
+                daily_nutrition['calories'] += food.calories
+                daily_nutrition['protein'] += food.protein
+                daily_nutrition['carbs'] += food.carbs
+                daily_nutrition['fats'] += food.fats
                 if item.meal_type in meal_type_totals:
-                    meal_type_totals[item.meal_type]['calories'] += item.food.calories
+                    meal_type_totals[item.meal_type]['calories'] += food.calories
 
     # 2. Recommended Values (using simple estimates)
     recommended_values = {'calories': 2000, 'protein': 50, 'carbs': 300, 'fats': 70}
@@ -844,13 +1117,21 @@ def _get_student_nutrition_data(student_detail, target_date):
         if day_plan and day_attendance and day_attendance.was_present:
             day_count += 1
             for item in day_plan.items:
+                food = getattr(item, 'food', None)
+                if food is None:
+                    logger.warning(
+                        "Skipping historical meal plan item %s for student %s because the food record is missing.",
+                        getattr(item, 'id', None),
+                        getattr(student_detail, 'id', None),
+                    )
+                    continue
                 if (item.meal_type == 'Breakfast' and day_attendance.ate_breakfast) or \
                    (item.meal_type == 'Lunch' and day_attendance.ate_lunch) or \
                    (item.meal_type == 'Dinner' and day_attendance.ate_dinner):
-                    day_calories += item.food.calories
-                    day_protein += item.food.protein
-                    day_carbs += item.food.carbs
-                    day_fats += item.food.fats
+                    day_calories += food.calories
+                    day_protein += food.protein
+                    day_carbs += food.carbs
+                    day_fats += food.fats
         
         weekly_totals['calories'] += day_calories
         weekly_totals['protein'] += day_protein
@@ -888,27 +1169,56 @@ def login():
 
         user = User.query.filter_by(username=username).first()
         if user and user.check_password(password):
-            if user.uses_legacy_password_hash:
-                try:
+            try:
+                if user.uses_legacy_password_hash:
                     user.set_password(password)
-                    db.session.commit()
-                except Exception:
-                    db.session.rollback()
-                    current_app.logger.warning(
-                        'Unable to upgrade legacy password hash for user_id=%s',
-                        user.id,
-                        exc_info=True,
-                    )
+                user.last_login_at = utcnow()
+                add_audit_log(
+                    'login',
+                    'user',
+                    entity_id=user.id,
+                    actor_user=user,
+                    details={'username': user.username, 'role': user.normalized_role},
+                )
+                if not _commit_session(f"Login bookkeeping for user_id={user.id}"):
+                    logger.warning('Continuing login without bookkeeping commit for user_id=%s', user.id)
+            except Exception:
+                _rollback_session()
+                current_app.logger.warning(
+                    'Unable to finalize login bookkeeping for user_id=%s',
+                    user.id,
+                    exc_info=True,
+                )
             login_user(user)
+            establish_session(user)
+            logger.info("User %s logged in successfully with role=%s", user.username, user.role)
             flash('Logged in successfully!', 'success')
             return redirect(url_for('main.dashboard'))
         else:
+            logger.info("Failed login attempt for username=%s", username)
+            add_audit_log(
+                'login_failed',
+                'user',
+                entity_id=username or None,
+                actor_user=None,
+                school_id=None,
+                status='failed',
+                details={'username': username},
+            )
+            _commit_session(f"Failed login audit username={username or 'blank'}")
             flash('Invalid username or password.', 'danger')
     return render_template('login.html')
 
 @main.route('/logout', methods=['POST'])
 @login_required
 def logout():
+    try:
+        add_audit_log('logout', 'user', entity_id=current_user.id, details={'username': current_user.username})
+        _commit_session(f"Logout audit user_id={current_user.id}")
+    except Exception:
+        _rollback_session()
+        logger.exception("Failed to persist logout audit for user_id=%s", getattr(current_user, 'id', None))
+    logger.info("User %s logged out", getattr(current_user, 'username', None))
     logout_user()
     flash('You have been logged out.', 'info')
     return redirect(url_for('main.login'))
@@ -918,83 +1228,111 @@ def logout():
 @login_required
 def dashboard():
     today = date.today()
-    if current_user.role == 'school':
-        max_student_dob = _max_student_dob(today)
-        all_foods = Food.query.order_by(Food.name).all()
-        backdated_plans = MealPlan.query.filter(MealPlan.school_id == current_user.id, MealPlan.plan_date < today).all()
-        for plan in backdated_plans:
-            db.session.delete(plan)
-        if backdated_plans:
-            db.session.commit()
-        upcoming_plans = MealPlan.query.filter(MealPlan.school_id == current_user.id, MealPlan.plan_date >= today).order_by(MealPlan.plan_date.desc()).all()
-        student_details = StudentDetail.query.filter_by(school_id=current_user.id).order_by(StudentDetail.roll_no).all()
-        students_for_attendance = [{'id': detail.id, 'name': detail.full_name, 'class': f"Grade {detail.grade} - {detail.section}", 'roll_no': detail.roll_no} for detail in student_details]
+    if current_user.has_role(User.ROLE_MASTER_ADMIN):
+        return redirect(url_for('platform.platform_dashboard'))
 
-        student_ids = [detail.id for detail in student_details]
-        today_plan = MealPlan.query.options(selectinload(MealPlan.items).selectinload(MealPlanItem.food)).filter_by(
-            school_id=current_user.id,
-            plan_date=today,
-        ).first()
-        today_attendance_records = Attendance.query.filter(
-            Attendance.student_id.in_(student_ids),
-            Attendance.attendance_date == today
-        ).all() if student_ids else []
+    if current_user.has_role(User.ROLE_SCHOOL_ADMIN):
+        school_scope_id = _school_scope_id()
+        try:
+            max_student_dob = _max_student_dob(today)
+            all_foods = _school_food_query(school_scope_id).order_by(Food.name).all()
+            backdated_plans = MealPlan.query.filter(MealPlan.school_id == school_scope_id, MealPlan.plan_date < today).all()
+            for plan in backdated_plans:
+                plan.soft_delete()
+                add_audit_log('soft_delete', 'meal_plan', entity_id=plan.id, details={'reason': 'backdated_cleanup'})
+            if backdated_plans and not _commit_session(f"Backdated meal plan cleanup for school_id={current_user.id}"):
+                flash('Some expired meal plans could not be cleaned up automatically.', 'warning')
 
-        attendance_marked_today = len(today_attendance_records)
-        students_served_today = sum(1 for record in today_attendance_records if record.was_present)
-        attendance_completion_percent = round((attendance_marked_today / len(student_details)) * 100, 1) if student_details else 0
-        attendance_enabled = bool(today_plan and today_plan.items)
-        school_summary = {
-            'student_count': len(student_details),
-            'food_count': len(all_foods),
-            'upcoming_plan_count': len(upcoming_plans),
-            'today_plan_item_count': len(today_plan.items) if today_plan else 0,
-            'attendance_marked_today': attendance_marked_today,
-            'students_served_today': students_served_today,
-            'attendance_completion_percent': attendance_completion_percent,
-            'attendance_enabled': attendance_enabled,
-        }
+            upcoming_plans = MealPlan.query.filter(MealPlan.school_id == school_scope_id, MealPlan.plan_date >= today).order_by(MealPlan.plan_date.desc()).all()
+            student_details = StudentDetail.query.filter_by(school_id=school_scope_id).order_by(StudentDetail.roll_no).all()
+            students_for_attendance = [{'id': detail.id, 'name': detail.full_name, 'class': f"Grade {detail.grade} - {detail.section}", 'roll_no': detail.roll_no} for detail in student_details]
 
-        return render_template(
-            'dashboard_school.html',
-            user=current_user,
-            all_foods=all_foods,
-            upcoming_plans=upcoming_plans,
-            today=today,
-            max_student_dob=max_student_dob,
-            students=student_details,
-            students_for_attendance=students_for_attendance,
-            school_summary=school_summary,
-            attendance_enabled=attendance_enabled
-        )
+            student_ids = [detail.id for detail in student_details]
+            today_plan = MealPlan.query.options(selectinload(MealPlan.items).selectinload(MealPlanItem.food)).filter_by(
+                school_id=school_scope_id,
+                plan_date=today,
+            ).first()
+            today_attendance_records = Attendance.query.filter(
+                Attendance.student_id.in_(student_ids),
+                Attendance.attendance_date == today
+            ).all() if student_ids else []
 
-    elif current_user.role == 'student':
+            attendance_marked_today = len(today_attendance_records)
+            students_served_today = sum(1 for record in today_attendance_records if record.was_present)
+            attendance_completion_percent = round((attendance_marked_today / len(student_details)) * 100, 1) if student_details else 0
+            attendance_enabled = bool(today_plan and today_plan.items)
+            school_summary = {
+                'student_count': len(student_details),
+                'food_count': len(all_foods),
+                'upcoming_plan_count': len(upcoming_plans),
+                'today_plan_item_count': len(today_plan.items) if today_plan and today_plan.items else 0,
+                'attendance_marked_today': attendance_marked_today,
+                'students_served_today': students_served_today,
+                'attendance_completion_percent': attendance_completion_percent,
+                'attendance_enabled': attendance_enabled,
+            }
+
+            return render_template(
+                'dashboard_school.html',
+                user=current_user,
+                school_account=_active_school_account(),
+                all_foods=all_foods,
+                upcoming_plans=upcoming_plans,
+                today=today,
+                max_student_dob=max_student_dob,
+                students=student_details,
+                students_for_attendance=students_for_attendance,
+                school_summary=school_summary,
+                attendance_enabled=attendance_enabled
+            )
+        except Exception:
+            _rollback_session()
+            logger.exception("Failed to load school dashboard for user_id=%s", current_user.id)
+            flash('Some dashboard data could not be loaded right now.', 'warning')
+            return render_template('dashboard_school.html', **_empty_school_dashboard_context(today))
+
+    if current_user.has_role(User.ROLE_USER):
         student_detail = _student_detail_or_logout()
         if not student_detail:
             return redirect(url_for('main.login'))
-            
-        nutrition_data = _get_student_nutrition_data(student_detail, today)
-        attendance_history = Attendance.query.filter_by(student_id=student_detail.id).order_by(Attendance.attendance_date.desc()).all()
-        total_records = len(attendance_history)
-        present_records = sum(1 for r in attendance_history if r.was_present)
-        attendance_percentage = round((present_records / total_records) * 100, 1) if total_records > 0 else 100
-        recent_absences = [r for r in attendance_history if not r.was_present][:5]
 
-        return render_template('dashboard_student.html', user=current_user, today=today, todays_plan=nutrition_data['meal_plan'],
-                               daily_nutrition=nutrition_data['daily_nutrition'], recommended_values=nutrition_data['recommended_values'],
-                               nutrition_percentages=nutrition_data['nutrition_percentages'], meal_type_totals=nutrition_data['meal_type_totals'],
-                               weekly_nutrition=nutrition_data['weekly_nutrition'], weekly_averages=nutrition_data['weekly_averages'],
-                               attendance_percentage=attendance_percentage, recent_absences=recent_absences)
+        try:
+            nutrition_data = _get_student_nutrition_data(student_detail, today)
+            attendance_history = Attendance.query.filter_by(student_id=student_detail.id).order_by(Attendance.attendance_date.desc()).all()
+            total_records = len(attendance_history)
+            present_records = sum(1 for r in attendance_history if r.was_present)
+            attendance_percentage = round((present_records / total_records) * 100, 1) if total_records > 0 else 100
+            recent_absences = [r for r in attendance_history if not r.was_present][:5]
+
+            return render_template('dashboard_student.html', user=current_user, student=student_detail, today=today, todays_plan=nutrition_data['meal_plan'],
+                                   daily_nutrition=nutrition_data['daily_nutrition'], recommended_values=nutrition_data['recommended_values'],
+                                   nutrition_percentages=nutrition_data['nutrition_percentages'], meal_type_totals=nutrition_data['meal_type_totals'],
+                                   weekly_nutrition=nutrition_data['weekly_nutrition'], weekly_averages=nutrition_data['weekly_averages'],
+                                   attendance_percentage=attendance_percentage, recent_absences=recent_absences)
+        except Exception:
+            _rollback_session()
+            logger.exception("Failed to load student dashboard for user_id=%s", current_user.id)
+            flash('Some dashboard data could not be loaded right now.', 'warning')
+            return render_template('dashboard_student.html', student=student_detail, **_empty_student_dashboard_context(today))
+
+    logger.warning("User %s has unsupported role=%s for dashboard access", current_user.username, current_user.role)
+    flash('Your account role is not configured for a dashboard yet.', 'danger')
+    logout_user()
+    return redirect(url_for('main.login'))
 
 # --- STUDENT MANAGEMENT (full CRUD from File 2) ---
 @main.route('/add-student', methods=['POST'])
 @login_required
 def add_student():
-    if current_user.role != 'school':
+    if not current_user.can_manage_students_effective:
         flash('Unauthorized access.', 'danger')
         return redirect(url_for('main.dashboard'))
+    school_scope_id = _school_scope_id()
     
     username = request.form.get('username', '').strip()
+    full_name = request.form.get('full_name', '').strip()
+    section = request.form.get('section', '').strip()
+    sex = request.form.get('sex')
     if User.query.filter_by(username=username).first():
         flash(f'Login username "{username}" already exists.', 'danger')
         return redirect(url_for('main.dashboard'))
@@ -1008,86 +1346,130 @@ def add_student():
     if not username or len(password) < 6:
         flash('Please provide a username and an initial password of at least 6 characters.', 'danger')
         return redirect(url_for('main.dashboard'))
+    if not full_name or not section or sex not in {'Male', 'Female'}:
+        flash('Please provide the required student profile details before saving.', 'danger')
+        return redirect(url_for('main.dashboard'))
     if not student_dob or student_dob > max_student_dob:
         flash('Students must be at least 5 years old. Please choose an earlier date of birth.', 'danger')
         return redirect(url_for('main.dashboard'))
     if (height_cm is not None and height_cm <= 0) or (weight_kg is not None and weight_kg <= 0):
         flash('Height and weight must be positive numbers.', 'danger')
         return redirect(url_for('main.dashboard'))
+
+    try:
+        roll_no = _parse_positive_int(request.form.get('roll_no'), 'Roll number')
+        grade = _parse_positive_int(request.form.get('grade'), 'Grade')
+    except ValueError as exc:
+        flash(str(exc), 'danger')
+        return redirect(url_for('main.dashboard'))
     
     try:
-        new_user = User(username=username, role='student')
+        new_user = User(username=username, role=User.ROLE_USER, school_id=school_scope_id)
         new_user.set_password(password)
-        student_details = StudentDetail(full_name=request.form.get('full_name', '').strip(), roll_no=int(request.form.get('roll_no')), dob=student_dob, sex=request.form.get('sex'), grade=int(request.form.get('grade')), section=request.form.get('section', '').strip(), school_id=current_user.id)
+        student_details = StudentDetail(full_name=full_name, roll_no=roll_no, dob=student_dob, sex=sex, grade=grade, section=section, school_id=school_scope_id)
         new_user.student_detail = student_details
         db.session.add(new_user)
         
         if height_cm and weight_kg:
             initial_metric = HealthMetric(student_detail=student_details, height_cm=height_cm, weight_kg=weight_kg, record_date=date.today())
             db.session.add(initial_metric)
+        add_audit_log('create', 'student', entity_id=username, details={'school_id': school_scope_id, 'full_name': full_name})
         
-        db.session.commit()
+        if not _commit_session(f"Add student username={username} school_id={school_scope_id}"):
+            flash('An error occurred while adding the student. Please try again.', 'danger')
+            return redirect(url_for('main.dashboard'))
+
+        broadcast_school_notification(
+            school_scope_id,
+            'Student account added',
+            f'{student_details.full_name} was added to the roster.',
+            category='success',
+            link=url_for('main.dashboard'),
+        )
+        _commit_session(f"Student add notifications school_id={school_scope_id}")
         flash(f'Student "{student_details.full_name}" created successfully!', 'success')
     except Exception as e:
-        db.session.rollback()
+        _rollback_session()
+        logger.exception("Unexpected error while adding student username=%s for school_id=%s", username, school_scope_id)
         flash(f'An error occurred while adding the student: {e}', 'danger')
     return redirect(url_for('main.dashboard'))
 
 @main.route('/delete-student/<int:user_id>', methods=['POST'])
 @login_required
 def delete_student(user_id):
-    if current_user.role != 'school':
+    if not current_user.can_manage_students_effective:
         flash('Unauthorized access.', 'danger')
         return redirect(url_for('main.dashboard'))
 
-    user_to_delete = User.query.get_or_404(user_id)
-    if user_to_delete.student_detail.school_id != current_user.id:
-        flash('You do not have permission to delete this student.', 'danger')
+    user_to_delete, student_detail = _get_school_owned_student_user(user_id)
+    if user_to_delete is None or student_detail is None:
         return redirect(url_for('main.dashboard'))
     
-    student_name = user_to_delete.student_detail.full_name
-    db.session.delete(user_to_delete)
-    db.session.commit()
+    student_name = student_detail.full_name
+    user_to_delete.soft_delete()
+    student_detail.soft_delete()
+    add_audit_log('soft_delete', 'student', entity_id=user_id, details={'school_id': _school_scope_id(), 'full_name': student_name})
+    if not _commit_session(f"Delete student user_id={user_id} school_id={_school_scope_id()}"):
+        flash('The student could not be deleted right now. Please try again.', 'danger')
+        return redirect(url_for('main.dashboard'))
+
     flash(f'Student "{student_name}" has been deleted successfully.', 'success')
     return redirect(url_for('main.dashboard'))
 
 @main.route('/edit-student/<int:user_id>', methods=['GET', 'POST'])
 @login_required
 def edit_student(user_id):
-    if current_user.role != 'school':
+    if not current_user.can_manage_students_effective:
         flash('Unauthorized access.', 'danger')
         return redirect(url_for('main.dashboard'))
 
-    user_to_edit = User.query.get_or_404(user_id)
-    if user_to_edit.student_detail.school_id != current_user.id:
-        flash('You do not have permission to edit this student.', 'danger')
+    user_to_edit, student_detail = _get_school_owned_student_user(user_id)
+    if user_to_edit is None or student_detail is None:
         return redirect(url_for('main.dashboard'))
 
     max_student_dob = _max_student_dob()
     if request.method == 'POST':
-        student_detail = user_to_edit.student_detail
         student_dob = _parse_form_date('dob')
         if not student_dob or student_dob > max_student_dob:
             flash('Students must be at least 5 years old. Please choose an earlier date of birth.', 'danger')
             return redirect(url_for('main.edit_student', user_id=user_id))
 
-        student_detail.full_name = request.form.get('full_name', '').strip()
-        student_detail.roll_no = int(request.form.get('roll_no'))
-        student_detail.dob = student_dob
-        student_detail.sex = request.form.get('sex')
-        student_detail.grade = int(request.form.get('grade'))
-        student_detail.section = request.form.get('section', '').strip()
-        
-        new_password = request.form.get('password')
-        if new_password:
-            if len(new_password) < 6:
-                flash('New password must be at least 6 characters.', 'danger')
-                return redirect(url_for('main.edit_student', user_id=user_id))
-            user_to_edit.set_password(new_password)
+        try:
+            full_name = request.form.get('full_name', '').strip()
+            section = request.form.get('section', '').strip()
+            sex = request.form.get('sex')
+            if not full_name or not section or sex not in {'Male', 'Female'}:
+                raise ValueError('Please provide the required student profile details before saving.')
+
+            student_detail.full_name = full_name
+            student_detail.roll_no = _parse_positive_int(request.form.get('roll_no'), 'Roll number')
+            student_detail.dob = student_dob
+            student_detail.sex = sex
+            student_detail.grade = _parse_positive_int(request.form.get('grade'), 'Grade')
+            student_detail.section = section
             
-        db.session.commit()
-        flash(f'Details for "{student_detail.full_name}" have been updated!', 'success')
-        return redirect(url_for('main.dashboard'))
+            new_password = request.form.get('password')
+            if new_password:
+                if len(new_password) < 6:
+                    flash('New password must be at least 6 characters.', 'danger')
+                    return redirect(url_for('main.edit_student', user_id=user_id))
+                user_to_edit.set_password(new_password)
+            
+            add_audit_log('update', 'student', entity_id=user_id, details={'school_id': _school_scope_id(), 'full_name': student_detail.full_name})
+            if not _commit_session(f"Edit student user_id={user_id} school_id={_school_scope_id()}"):
+                flash('The student details could not be updated right now. Please try again.', 'danger')
+                return redirect(url_for('main.edit_student', user_id=user_id))
+
+            flash(f'Details for "{student_detail.full_name}" have been updated!', 'success')
+            return redirect(url_for('main.dashboard'))
+        except ValueError as exc:
+            flash(str(exc), 'danger')
+            return redirect(url_for('main.edit_student', user_id=user_id))
+        except Exception:
+            _rollback_session()
+            logger.exception("Unexpected error while editing student user_id=%s for school_id=%s", user_id, current_user.id)
+            flash('An unexpected error occurred while updating the student.', 'danger')
+            return redirect(url_for('main.edit_student', user_id=user_id))
 
     return render_template('edit_student.html', user=user_to_edit, max_student_dob=max_student_dob)
 
@@ -1095,9 +1477,10 @@ def edit_student(user_id):
 @main.route('/create-meal-plan', methods=['POST'])
 @login_required
 def create_meal_plan():
-    if current_user.role != 'school':
+    if not current_user.can_manage_meals_effective:
         flash('Unauthorized access.', 'danger')
         return redirect(url_for('main.dashboard'))
+    school_scope_id = _school_scope_id()
     plan_date = _parse_form_date('plan_date')
     if not plan_date:
         flash('Please choose a valid date for the meal plan.', 'danger')
@@ -1105,75 +1488,191 @@ def create_meal_plan():
     if plan_date < date.today():
         flash('Meal plans can only be created for today or a future date.', 'danger')
         return redirect(url_for('main.dashboard'))
-    if MealPlan.query.filter_by(school_id=current_user.id, plan_date=plan_date).first():
+    if MealPlan.query.filter_by(school_id=school_scope_id, plan_date=plan_date).first():
         flash(f'A meal plan for {plan_date.strftime("%d %B, %Y")} already exists.', 'warning')
         return redirect(url_for('main.dashboard'))
 
-    new_plan = MealPlan(school_id=current_user.id, plan_date=plan_date)
+    meal_types = ['breakfast', 'lunch', 'dinner'] 
+    selected_food_ids = {}
+    all_selected_food_ids = []
+    try:
+        for meal_type in meal_types:
+            food_ids = _parse_food_ids(request.form.getlist(f'{meal_type}_foods'))
+            selected_food_ids[meal_type] = food_ids
+            all_selected_food_ids.extend(food_ids)
+    except ValueError as exc:
+        flash(str(exc), 'danger')
+        return redirect(url_for('main.dashboard'))
+
+    if not _validate_food_ids(all_selected_food_ids, school_scope_id):
+        flash('One or more selected food items are no longer available. Please refresh and try again.', 'danger')
+        return redirect(url_for('main.dashboard'))
+
+    approved_immediately = current_user.can_approve_workflows_effective
+    new_plan = MealPlan(
+        school_id=school_scope_id,
+        plan_date=plan_date,
+        status='approved' if approved_immediately else 'pending',
+        created_by_user_id=current_user.id,
+        approved_by_user_id=current_user.id if approved_immediately else None,
+        approved_at=utcnow() if approved_immediately else None,
+    )
     db.session.add(new_plan)
     items_added = False
-    meal_types = ['breakfast', 'lunch', 'dinner'] 
     for meal_type in meal_types:
-        food_ids = request.form.getlist(f'{meal_type}_foods') 
+        food_ids = selected_food_ids[meal_type]
         if food_ids:
             items_added = True
         for food_id in food_ids:
-            item = MealPlanItem(plan=new_plan, food_id=int(food_id), meal_type=meal_type.capitalize())
+            item = MealPlanItem(plan=new_plan, food_id=food_id, meal_type=meal_type.capitalize())
             db.session.add(item)
     if not items_added:
-        db.session.rollback()
+        _rollback_session()
         flash('Cannot create an empty meal plan. Please select at least one food item.', 'danger')
         return redirect(url_for('main.dashboard'))
-            
-    db.session.commit()
-    flash(f'Meal plan for {plan_date.strftime("%d %B, %Y")} created!', 'success')
+
+    db.session.flush()
+    if not approved_immediately:
+        db.session.add(
+            ApprovalRequest(
+                school_id=school_scope_id,
+                request_type='meal_plan_approval',
+                target_model='MealPlan',
+                target_id=str(new_plan.id),
+                requester_user_id=current_user.id,
+                payload={'plan_date': plan_date.isoformat()},
+            )
+        )
+    add_audit_log('create', 'meal_plan', entity_id=plan_date.isoformat(), details={'school_id': school_scope_id, 'status': new_plan.status})
+
+    if not _commit_session(f"Create meal plan school_id={school_scope_id} plan_date={plan_date.isoformat()}"):
+        flash('The meal plan could not be created right now. Please try again.', 'danger')
+        return redirect(url_for('main.dashboard'))
+
+    broadcast_school_notification(
+        school_scope_id,
+        'Meal plan updated',
+        f'Meal plan for {plan_date.strftime("%d %B, %Y")} is now {new_plan.status}.',
+        category='success' if approved_immediately else 'warning',
+        link=url_for('main.dashboard'),
+    )
+    _commit_session(f"Meal plan notifications school_id={school_scope_id}")
+    flash(
+        f'Meal plan for {plan_date.strftime("%d %B, %Y")} {"created" if approved_immediately else "submitted for approval"}!',
+        'success',
+    )
     return redirect(url_for('main.dashboard'))
 
 @main.route('/delete-meal-plan/<int:plan_id>', methods=['POST'])
 @login_required
 def delete_meal_plan(plan_id):
+    if not current_user.can_manage_meals_effective:
+        flash('Unauthorized access.', 'danger')
+        return redirect(url_for('main.dashboard'))
     plan = MealPlan.query.get_or_404(plan_id)
-    if plan.school_id != current_user.id:
+    if plan.school_id != _school_scope_id():
         flash('You do not have permission to delete this plan.', 'danger')
         return redirect(url_for('main.dashboard'))
-    db.session.delete(plan)
-    db.session.commit()
+    plan.soft_delete()
+    add_audit_log('soft_delete', 'meal_plan', entity_id=plan_id, details={'school_id': _school_scope_id(), 'plan_date': plan.plan_date.isoformat()})
+    if not _commit_session(f"Delete meal plan plan_id={plan_id} school_id={_school_scope_id()}"):
+        flash('The meal plan could not be deleted right now. Please try again.', 'danger')
+        return redirect(url_for('main.dashboard'))
+
+    broadcast_school_notification(
+        _school_scope_id(),
+        'Meal plan removed',
+        f'Meal plan for {plan.plan_date.strftime("%d %b, %Y")} was archived.',
+        category='warning',
+        link=url_for('main.dashboard'),
+    )
+    _commit_session(f"Meal plan delete notifications school_id={_school_scope_id()}")
     flash(f'Meal plan for {plan.plan_date.strftime("%d %b, %Y")} has been deleted.', 'success')
     return redirect(url_for('main.dashboard'))
 
 @main.route('/edit-meal-plan/<int:plan_id>', methods=['GET', 'POST'])
 @login_required
 def edit_meal_plan(plan_id):
+    if not current_user.can_manage_meals_effective:
+        flash('Unauthorized access.', 'danger')
+        return redirect(url_for('main.dashboard'))
     plan = MealPlan.query.get_or_404(plan_id)
-    if plan.school_id != current_user.id:
+    if plan.school_id != _school_scope_id():
         flash('You do not have permission to edit this meal plan.', 'danger')
         return redirect(url_for('main.dashboard'))
     if plan.plan_date < date.today():
-        db.session.delete(plan)
-        db.session.commit()
+        plan.soft_delete()
+        add_audit_log('soft_delete', 'meal_plan', entity_id=plan_id, details={'reason': 'backdated_edit_cleanup'})
+        if not _commit_session(f"Delete backdated meal plan plan_id={plan_id} school_id={_school_scope_id()}"):
+            flash('The outdated meal plan could not be removed right now. Please try again.', 'danger')
+            return redirect(url_for('main.dashboard'))
+
         flash('Backdated meal plans are no longer available.', 'warning')
         return redirect(url_for('main.dashboard'))
     
     if request.method == 'POST':
+        meal_types = ['breakfast', 'lunch', 'dinner']
+        selected_food_ids = {}
+        all_selected_food_ids = []
+        try:
+            for meal_type in meal_types:
+                food_ids = _parse_food_ids(request.form.getlist(f'{meal_type}_foods'))
+                selected_food_ids[meal_type] = food_ids
+                all_selected_food_ids.extend(food_ids)
+        except ValueError as exc:
+            flash(str(exc), 'danger')
+            return redirect(url_for('main.edit_meal_plan', plan_id=plan_id))
+
+        if not _validate_food_ids(all_selected_food_ids, _school_scope_id()):
+            flash('One or more selected food items are no longer available. Please refresh and try again.', 'danger')
+            return redirect(url_for('main.edit_meal_plan', plan_id=plan_id))
+
         MealPlanItem.query.filter_by(meal_plan_id=plan_id).delete()
         items_added = False
-        meal_types = ['breakfast', 'lunch', 'dinner']
         for meal_type in meal_types:
-            food_ids = request.form.getlist(f'{meal_type}_foods')
+            food_ids = selected_food_ids[meal_type]
             if food_ids:
                 items_added = True
             for food_id in food_ids:
-                item = MealPlanItem(plan=plan, food_id=int(food_id), meal_type=meal_type.capitalize())
+                item = MealPlanItem(plan=plan, food_id=food_id, meal_type=meal_type.capitalize())
                 db.session.add(item)
         if not items_added:
             flash('Cannot save an empty meal plan.', 'danger')
-            db.session.rollback() # Important: rollback the deletion of old items
+            _rollback_session()
             return redirect(url_for('main.edit_meal_plan', plan_id=plan_id))
-        db.session.commit()
+
+        plan.status = 'approved' if current_user.can_approve_workflows_effective else 'pending'
+        plan.created_by_user_id = current_user.id
+        plan.approved_by_user_id = current_user.id if current_user.can_approve_workflows_effective else None
+        plan.approved_at = utcnow() if current_user.can_approve_workflows_effective else None
+        add_audit_log('update', 'meal_plan', entity_id=plan_id, details={'school_id': _school_scope_id(), 'status': plan.status})
+        if plan.status == 'pending':
+            db.session.add(
+                ApprovalRequest(
+                    school_id=_school_scope_id(),
+                    request_type='meal_plan_approval',
+                    target_model='MealPlan',
+                    target_id=str(plan.id),
+                    requester_user_id=current_user.id,
+                    payload={'plan_date': plan.plan_date.isoformat()},
+                )
+            )
+        if not _commit_session(f"Edit meal plan plan_id={plan_id} school_id={_school_scope_id()}"):
+            flash('The meal plan could not be updated right now. Please try again.', 'danger')
+            return redirect(url_for('main.edit_meal_plan', plan_id=plan_id))
+
+        broadcast_school_notification(
+            _school_scope_id(),
+            'Meal plan updated',
+            f'Meal plan for {plan.plan_date.strftime("%d %B, %Y")} is now {plan.status}.',
+            category='success' if plan.status == 'approved' else 'warning',
+            link=url_for('main.dashboard'),
+        )
+        _commit_session(f"Meal plan edit notifications school_id={_school_scope_id()}")
         flash(f'Meal plan for {plan.plan_date.strftime("%d %B, %Y")} updated!', 'success')
         return redirect(url_for('main.dashboard'))
 
-    all_foods = Food.query.order_by(Food.name).all()
+    all_foods = _school_food_query().order_by(Food.name).all()
     existing_food_ids = {'Breakfast': set(), 'Lunch': set(), 'Dinner': set()}
     for item in plan.items:
         if item.meal_type in existing_food_ids:
@@ -1184,12 +1683,16 @@ def edit_meal_plan(plan_id):
 @main.route('/save-attendance', methods=['POST'])
 @login_required
 def save_attendance():
-    if current_user.role != 'school':
+    if not current_user.can_manage_attendance_effective:
         flash('Unauthorized access.', 'danger')
         return redirect(url_for('main.dashboard'))
+    school_scope_id = _school_scope_id()
     try:
         data = json.loads(request.form.get('attendance_data', '[]'))
     except json.JSONDecodeError:
+        flash('Attendance data was invalid. Please try again.', 'danger')
+        return redirect(url_for('main.dashboard'))
+    if not isinstance(data, list):
         flash('Attendance data was invalid. Please try again.', 'danger')
         return redirect(url_for('main.dashboard'))
 
@@ -1202,7 +1705,7 @@ def save_attendance():
         return redirect(url_for('main.dashboard'))
 
     today_plan = MealPlan.query.options(selectinload(MealPlan.items).selectinload(MealPlanItem.food)).filter_by(
-        school_id=current_user.id,
+        school_id=school_scope_id,
         plan_date=date.today(),
     ).first()
     if not today_plan or not today_plan.items:
@@ -1210,25 +1713,55 @@ def save_attendance():
         return redirect(url_for('main.dashboard'))
 
     for student_data in data:
+        if not isinstance(student_data, dict):
+            logger.warning("Skipping malformed attendance payload entry for school_id=%s: %r", school_scope_id, student_data)
+            continue
         student_detail = db.session.get(StudentDetail, student_data.get('id'))
-        if not student_detail or student_detail.school_id != current_user.id:
+        if not student_detail or student_detail.school_id != school_scope_id:
             continue
         record = Attendance.query.filter_by(student_id=student_detail.id, attendance_date=attendance_date).first()
         if not record:
             record = Attendance(student_id=student_detail.id, attendance_date=attendance_date)
             db.session.add(record)
+        record.recorded_by_user_id = current_user.id
+        record.approval_status = 'approved' if current_user.can_approve_workflows_effective else 'pending'
         meals = student_data.get('meals', {})
+        if not isinstance(meals, dict):
+            meals = {}
         record.ate_breakfast = bool(meals.get('breakfast'))
         record.ate_lunch = bool(meals.get('lunch'))
         record.ate_dinner = bool(meals.get('dinner'))
-    db.session.commit()
+    if not current_user.can_approve_workflows_effective:
+        db.session.add(
+            ApprovalRequest(
+                school_id=school_scope_id,
+                request_type='attendance_approval',
+                target_model='Attendance',
+                target_id=attendance_date.isoformat(),
+                requester_user_id=current_user.id,
+                payload={'attendance_date': attendance_date.isoformat()},
+            )
+        )
+    add_audit_log('update', 'attendance', entity_id=attendance_date.isoformat(), details={'school_id': school_scope_id})
+    if not _commit_session(f"Save attendance school_id={school_scope_id} attendance_date={attendance_date.isoformat()}"):
+        flash('Attendance could not be saved right now. Please try again.', 'danger')
+        return redirect(url_for('main.dashboard'))
+
+    broadcast_school_notification(
+        school_scope_id,
+        'Attendance updated',
+        f'Attendance for {attendance_date.strftime("%d %B, %Y")} was saved.',
+        category='success',
+        link=url_for('main.dashboard'),
+    )
+    _commit_session(f"Attendance notifications school_id={school_scope_id}")
     flash(f'Meal attendance for {attendance_date.strftime("%d %B, %Y")} saved!', 'success')
     return redirect(url_for('main.dashboard'))
 
 @main.route('/get-attendance/<iso_date>')
 @login_required
 def get_attendance_by_date(iso_date):
-    if current_user.role != 'school':
+    if not current_user.can_manage_attendance_effective:
         return jsonify({'error': 'Unauthorized'}), 403
     try:
         target_date = date.fromisoformat(iso_date)
@@ -1236,7 +1769,7 @@ def get_attendance_by_date(iso_date):
         return jsonify({'error': 'Invalid date'}), 400
     if target_date > date.today():
         return jsonify({'error': 'Future dates are not available'}), 400
-    all_students = StudentDetail.query.filter_by(school_id=current_user.id).order_by(StudentDetail.roll_no).all()
+    all_students = StudentDetail.query.filter_by(school_id=_school_scope_id()).order_by(StudentDetail.roll_no).all()
     student_ids = [student.id for student in all_students]
     attendance_records = Attendance.query.filter(
         Attendance.student_id.in_(student_ids),
@@ -1296,10 +1829,10 @@ def get_attendance_by_date(iso_date):
 @main.route('/manage-foods', methods=['GET'])
 @login_required
 def manage_foods():
-    if current_user.role != 'school':
+    if not current_user.can_manage_meals_effective:
         flash('Unauthorized access.', 'danger')
         return redirect(url_for('main.dashboard'))
-    all_foods = Food.query.order_by(Food.name).all()
+    all_foods = _school_food_query().order_by(Food.name).all()
     return render_template('manage_foods.html', foods=all_foods)
 
 # In backend/app/routes.py
@@ -1307,9 +1840,10 @@ def manage_foods():
 @main.route('/add-food', methods=['POST'])
 @login_required
 def add_food():
-    if current_user.role != 'school':
+    if not current_user.can_manage_meals_effective:
         flash('Unauthorized access.', 'danger')
         return redirect(url_for('main.dashboard'))
+    school_scope_id = _school_scope_id()
 
     name = request.form.get('name', '').strip()
     if not name:
@@ -1317,7 +1851,7 @@ def add_food():
         return redirect(url_for('main.manage_foods'))
 
     # Check if a food with this name already exists to prevent duplicates
-    existing_food = Food.query.filter_by(name=name).first()
+    existing_food = _school_food_query(school_scope_id).filter_by(name=name).first()
     if existing_food:
         flash(f'Food item "{name}" already exists. Please use a different name or edit the existing one.', 'danger')
         return redirect(url_for('main.manage_foods'))
@@ -1334,13 +1868,28 @@ def add_food():
             calories=calories,
             protein=protein,
             carbs=carbs,
-            fats=fats
+            fats=fats,
+            school_id=school_scope_id,
+            created_by_user_id=current_user.id,
         )
         db.session.add(new_food)
-        db.session.commit()
+        add_audit_log('create', 'food', entity_id=name, details={'school_id': school_scope_id})
+        if not _commit_session(f"Add food name={name} school_id={school_scope_id}"):
+            flash('An error occurred while adding the food. Please try again.', 'danger')
+            return redirect(url_for('main.manage_foods'))
+
+        broadcast_school_notification(
+            school_scope_id,
+            'Food menu updated',
+            f'{new_food.name} was added to the school food catalog.',
+            category='success',
+            link=url_for('main.manage_foods'),
+        )
+        _commit_session(f"Food add notifications school_id={school_scope_id}")
         flash(f'Food item "{new_food.name}" was added successfully!', 'success')
     except Exception as e:
-        db.session.rollback()
+        _rollback_session()
+        logger.exception("Unexpected error while adding food name=%s for school_id=%s", name, school_scope_id)
         flash(f'An error occurred while adding the food: {e}', 'danger')
     
     return redirect(url_for('main.manage_foods'))
@@ -1348,9 +1897,16 @@ def add_food():
 @main.route('/edit-food/<int:food_id>', methods=['GET', 'POST'])
 @login_required
 def edit_food(food_id):
-    food_to_edit = Food.query.get_or_404(food_id)
-    if current_user.role != 'school':
+    if not current_user.can_manage_meals_effective:
+        flash('Unauthorized access.', 'danger')
         return redirect(url_for('main.dashboard'))
+    food_to_edit = Food.query.get_or_404(food_id)
+    if food_to_edit.school_id not in {None, _school_scope_id()}:
+        flash('You do not have permission to edit this food item.', 'danger')
+        return redirect(url_for('main.manage_foods'))
+    if food_to_edit.school_id is None:
+        flash('Default food items are shared across schools and cannot be edited here.', 'warning')
+        return redirect(url_for('main.manage_foods'))
     if request.method == 'POST':
         try:
             name = request.form.get('name', '').strip()
@@ -1370,11 +1926,16 @@ def edit_food(food_id):
             food_to_edit.protein = protein
             food_to_edit.carbs = carbs
             food_to_edit.fats = fats
-            db.session.commit()
+            add_audit_log('update', 'food', entity_id=food_id, details={'school_id': _school_scope_id(), 'name': name})
+            if not _commit_session(f"Edit food food_id={food_id} school_id={_school_scope_id()}"):
+                flash('Food item could not be updated right now. Please try again.', 'danger')
+                return redirect(url_for('main.edit_food', food_id=food_id))
+
             flash(f'Food item "{food_to_edit.name}" updated!', 'success')
             return redirect(url_for('main.manage_foods'))
         except Exception as e:
-            db.session.rollback()
+            _rollback_session()
+            logger.exception("Unexpected error while editing food_id=%s for school_id=%s", food_id, _school_scope_id())
             flash(f'Error updating food item: {e}', 'danger')
             return redirect(url_for('main.edit_food', food_id=food_id))
     return render_template('edit_food.html', food=food_to_edit)
@@ -1382,14 +1943,22 @@ def edit_food(food_id):
 @main.route('/delete-food/<int:food_id>', methods=['POST'])
 @login_required
 def delete_food(food_id):
-    if current_user.role != 'school':
+    if not current_user.can_manage_meals_effective:
+        flash('Unauthorized access.', 'danger')
         return redirect(url_for('main.dashboard'))
     if MealPlanItem.query.filter_by(food_id=food_id).first():
         flash('This food item cannot be deleted because it is part of an existing meal plan.', 'danger')
         return redirect(url_for('main.manage_foods'))
     food_to_delete = Food.query.get_or_404(food_id)
+    if food_to_delete.school_id not in {_school_scope_id()}:
+        flash('Only school-specific food items can be deleted here.', 'danger')
+        return redirect(url_for('main.manage_foods'))
     db.session.delete(food_to_delete)
-    db.session.commit()
+    add_audit_log('delete', 'food', entity_id=food_id, details={'school_id': _school_scope_id(), 'name': food_to_delete.name})
+    if not _commit_session(f"Delete food food_id={food_id} school_id={_school_scope_id()}"):
+        flash('The food item could not be deleted right now. Please try again.', 'danger')
+        return redirect(url_for('main.manage_foods'))
+
     flash(f'Food item "{food_to_delete.name}" has been deleted.', 'success')
     return redirect(url_for('main.manage_foods'))
 
@@ -1397,7 +1966,7 @@ def delete_food(food_id):
 @main.route("/meals")
 @login_required
 def meals():
-    if current_user.role != 'student':
+    if not current_user.has_role(User.ROLE_USER):
         flash("This page is for students.", "info")
         return redirect(url_for('main.dashboard'))
 
@@ -1406,34 +1975,32 @@ def meals():
         return redirect(url_for('main.login'))
     
     today = date.today()
-    todays_plan = MealPlan.query.options(selectinload(MealPlan.items).selectinload(MealPlanItem.food)).filter_by(
-        school_id=student_detail.school_id,
-        plan_date=today,
-    ).first()
-    
-    plan_meals = None
-    if todays_plan:
-        plan_meals = {
-            'Breakfast': [{'name': item.food.name} for item in todays_plan.items if item.meal_type == 'Breakfast'],
-            'Lunch': [{'name': item.food.name} for item in todays_plan.items if item.meal_type == 'Lunch'],
-            'Dinner': [{'name': item.food.name} for item in todays_plan.items if item.meal_type == 'Dinner'],
-        }
+    try:
+        todays_plan = MealPlan.query.options(selectinload(MealPlan.items).selectinload(MealPlanItem.food)).filter_by(
+            school_id=student_detail.school_id,
+            plan_date=today,
+        ).first()
         
-    return render_template('student_meals.html', user=current_user, today=today, 
-                           todays_plan=todays_plan, meals=plan_meals)
+        plan_meals = _group_plan_meals(todays_plan) if todays_plan else None
+        return render_template('student_meals.html', user=current_user, student=student_detail, today=today, 
+                               todays_plan=todays_plan, meals=plan_meals, meal_plan=None, form_data=None)
+    except Exception:
+        _rollback_session()
+        logger.exception("Failed to load student meals page for user_id=%s", current_user.id)
+        flash('Today\'s meal plan could not be loaded right now.', 'warning')
+        return render_template('student_meals.html', user=current_user, student=student_detail, today=today, todays_plan=None, meals=None, meal_plan=None, form_data=None)
 
 @main.route('/get-meal-plans')
 @login_required
 def get_meal_plans():
-    if current_user.role != 'student' or not current_user.student_detail:
+    student = _student_detail_or_logout()
+    if not current_user.has_role(User.ROLE_USER) or not student:
         return jsonify({'error': 'Unauthorized'}), 403
     try:
         year = int(request.args.get('year'))
         month = int(request.args.get('month'))
     except (TypeError, ValueError):
         return jsonify({'error': 'Invalid month or year'}), 400
-    student = current_user.student_detail
-
     plans = MealPlan.query.filter(
         MealPlan.school_id == student.school_id,
         db.extract('year', MealPlan.plan_date) == year,
@@ -1447,15 +2014,14 @@ def get_meal_plans():
 @main.route('/get-meal-plan-detail')
 @login_required
 def get_meal_plan_detail():
-    if current_user.role != 'student' or not current_user.student_detail:
+    student = _student_detail_or_logout()
+    if not current_user.has_role(User.ROLE_USER) or not student:
         return jsonify({'error': 'Unauthorized'}), 403
     date_str = request.args.get('date')
     try:
         plan_date = date.fromisoformat(date_str)
     except (TypeError, ValueError):
         return jsonify({'error': 'Invalid date'}), 400
-    student = current_user.student_detail
-    
     plan = MealPlan.query.options(selectinload(MealPlan.items).selectinload(MealPlanItem.food)).filter_by(
         school_id=student.school_id,
         plan_date=plan_date,
@@ -1464,25 +2030,47 @@ def get_meal_plan_detail():
     if not plan:
         return jsonify(None)
 
-    plan_meals = {
-        'Breakfast': [{'name': item.food.name} for item in plan.items if item.meal_type == 'Breakfast'],
-        'Lunch': [{'name': item.food.name} for item in plan.items if item.meal_type == 'Lunch'],
-        'Dinner': [{'name': item.food.name} for item in plan.items if item.meal_type == 'Dinner'],
-    }
+    plan_meals = _group_plan_meals(plan)
     return jsonify(plan_meals)
+
+
+@main.route('/get-nutrition-data/<iso_date>')
+@login_required
+def get_nutrition_data(iso_date):
+    student = _student_detail_or_logout()
+    if not current_user.has_role(User.ROLE_USER) or not student:
+        return jsonify({'error': 'Unauthorized'}), 403
+    try:
+        selected_date = date.fromisoformat(iso_date)
+    except ValueError:
+        return jsonify({'error': 'Invalid date'}), 400
+    if selected_date > date.today():
+        return jsonify({'error': 'Future dates are not available'}), 400
+
+    nutrition_data = _get_student_nutrition_data(student, selected_date)
+    return jsonify(
+        {
+            'daily_nutrition': nutrition_data['daily_nutrition'],
+            'recommended_values': nutrition_data['recommended_values'],
+            'nutrition_percentages': nutrition_data['nutrition_percentages'],
+            'meal_type_totals': nutrition_data['meal_type_totals'],
+            'weekly_nutrition': nutrition_data['weekly_nutrition'],
+            'meal_plan': _meal_plan_history_payload(nutrition_data['meal_plan']) if nutrition_data['meal_plan'] else None,
+        }
+    )
 
 # --- Food Search API ---
 @main.route('/search-food')
 @limiter.limit('20 per minute')
 @login_required
 def search_food():
-    if current_user.role != 'student':
+    if not current_user.has_role(User.ROLE_USER):
         return jsonify({'error': 'Unauthorized'}), 403
     query = _normalize_food_query(request.args.get('q', ''))
     if not query:
         return jsonify([])
 
-    local_matches = _search_local_foods(query)
+    local_matches = _search_local_foods(query, school_scope_id=getattr(current_user, 'school_scope_id', None))
     if local_matches:
         return jsonify([_food_to_search_payload(food) for food in local_matches])
 
@@ -1490,21 +2078,25 @@ def search_food():
         return jsonify([])
 
     try:
+        if not check_ai_quota(current_user, 'nutrition_lookup', current_app.config):
+            return jsonify([_fallback_nutrition_lookup(query) | {'name': query.title(), 'source': 'quota-fallback'}])
         nutrition_data = copy.deepcopy(_cached_ai_nutrition_lookup(query.casefold()))
         nutrition_data["name"] = query.title()
+        _log_ai_usage(current_user, 'nutrition_lookup', 'success', request_units=estimate_request_units(query), details={'source': 'ai-search'})
         return jsonify([nutrition_data])
 
     except Exception as e:
         logger.warning("Error calling Google AI API or parsing response for search '%s': %s", query, e)
         fallback_nutrition = _fallback_nutrition_lookup(query)
         fallback_nutrition["name"] = query.title()
+        _log_ai_usage(current_user, 'nutrition_lookup', 'fallback', request_units=estimate_request_units(query), details={'source': 'search'})
         return jsonify([fallback_nutrition])
 
 @main.route('/health-form', methods=['GET', 'POST'])
 @limiter.limit('6 per minute', methods=['POST'])
 @login_required
 def health_form():
-    if current_user.role != 'student':
+    if not current_user.has_role(User.ROLE_USER):
         flash("This page is for students.", "info")
         return redirect(url_for('main.dashboard'))
 
@@ -1561,134 +2153,154 @@ def health_form():
             """
 
         try:
+            if not check_ai_quota(current_user, 'health_insights', current_app.config):
+                raise ValueError('Daily health insights quota reached.')
             ai_payload = _call_gemini_json(
                 prompt,
                 generation_config=_health_generation_config(),
                 log_label=f'Health insights for student {student_detail.id}',
             )
             insights = _coerce_health_insights_payload(ai_payload)
+            _log_ai_usage(current_user, 'health_insights', 'success', request_units=estimate_request_units(prompt), details={'student_id': student_detail.id})
             
-            return render_template('student_health_form.html', insights=insights, form_data=form_data, student=student_detail)
+            return render_template('student_health_form.html', insights=insights, form_data=form_data, student=student_detail, school_name=school_name)
 
         except Exception as e:
             logger.warning("Error generating or parsing health insights for student %s: %s", student_detail.id, e)
             fallback_insights = _fallback_health_insights(form_data)
+            _log_ai_usage(current_user, 'health_insights', 'fallback', request_units=estimate_request_units(prompt), details={'student_id': student_detail.id})
             flash("The AI service is unavailable right now, so we generated health insights locally instead.", "warning")
-            return render_template('student_health_form.html', insights=fallback_insights, form_data=form_data, student=student_detail)
+            return render_template('student_health_form.html', insights=fallback_insights, form_data=form_data, student=student_detail, school_name=school_name)
 
     # For GET request
     return render_template('student_health_form.html', insights=None, form_data=None, student=student_detail, school_name = school_name)
 @main.route('/insights')
 @login_required
 def insights():
-    if current_user.role != 'school':
+    if not current_user.can_view_reports_effective:
         flash('Unauthorized access.', 'danger')
         return redirect(url_for('main.dashboard'))
 
-    # Get all student details associated with the current school user
-    school_students = StudentDetail.query.filter_by(school_id=current_user.id).all()
-    student_ids = [s.id for s in school_students]
-    total_students = len(school_students)
-
     today = date.today()
+    try:
+        school_scope_id = _school_scope_id()
+        # Get all student details associated with the current school user
+        school_students = StudentDetail.query.filter_by(school_id=school_scope_id).all()
+        student_ids = [s.id for s in school_students]
+        total_students = len(school_students)
 
-    # --- 1. Top Summary Data ---
-    unique_students_attended_today_count = db.session.query(func.count(func.distinct(Attendance.student_id))).filter(
-        Attendance.student_id.in_(student_ids),
-        Attendance.attendance_date == today,
-        or_(Attendance.ate_breakfast, Attendance.ate_lunch, Attendance.ate_dinner)
-    ).scalar() or 0
-
-    attendance_today_percent = round((unique_students_attended_today_count / total_students) * 100, 1) if total_students > 0 else 0
-
-    seven_days_ago = today - timedelta(days=6)
-    total_possible_student_days_7days = total_students * 7 
-
-    # CHANGED: This is the first corrected line
-    unique_student_days_attended_7days = db.session.query(func.count(func.distinct(Attendance.student_id.cast(db.String) + ',' + Attendance.attendance_date.cast(db.String)))).filter(
-        Attendance.student_id.in_(student_ids),
-        Attendance.attendance_date >= seven_days_ago,
-        or_(Attendance.ate_breakfast, Attendance.ate_lunch, Attendance.ate_dinner)
-    ).scalar() or 0
-    
-    avg_weekly_attendance_percent = round((unique_student_days_attended_7days / total_possible_student_days_7days) * 100, 1) if total_possible_student_days_7days > 0 else 0
-
-    current_month, current_year = today.month, today.year
-    meals_this_month_count = db.session.query(func.sum(
-        (Attendance.ate_breakfast.cast(db.Integer)) +
-        (Attendance.ate_lunch.cast(db.Integer)) +
-        (Attendance.ate_dinner.cast(db.Integer))
-    )).filter(
-        Attendance.student_id.in_(student_ids),
-        extract('month', Attendance.attendance_date) == current_month,
-        extract('year', Attendance.attendance_date) == current_year
-    ).scalar() or 0
-
-    # --- 2. Chart Data ---
-    attendance_labels = [(today - timedelta(days=i)).strftime('%a %d') for i in range(6, -1, -1)]
-    attendance_data = []
-    for i in range(6, -1, -1):
-        day = today - timedelta(days=i)
-        attended_on_day_count = db.session.query(func.count(func.distinct(Attendance.student_id))).filter(
+        # --- 1. Top Summary Data ---
+        unique_students_attended_today_count = db.session.query(func.count(func.distinct(Attendance.student_id))).filter(
             Attendance.student_id.in_(student_ids),
-            Attendance.attendance_date == day,
+            Attendance.attendance_date == today,
             or_(Attendance.ate_breakfast, Attendance.ate_lunch, Attendance.ate_dinner)
         ).scalar() or 0
-        daily_percent = round((attended_on_day_count / total_students) * 100, 1) if total_students > 0 else 0
-        attendance_data.append(daily_percent)
 
-    breakfast_served_today = db.session.query(func.count(Attendance.id)).filter(Attendance.student_id.in_(student_ids), Attendance.attendance_date == today, Attendance.ate_breakfast == True).scalar() or 0
-    lunch_served_today = db.session.query(func.count(Attendance.id)).filter(Attendance.student_id.in_(student_ids), Attendance.attendance_date == today, Attendance.ate_lunch == True).scalar() or 0
-    dinner_served_today = db.session.query(func.count(Attendance.id)).filter(Attendance.student_id.in_(student_ids), Attendance.attendance_date == today, Attendance.ate_dinner == True).scalar() or 0
-    meal_distribution_data = [breakfast_served_today, lunch_served_today, dinner_served_today]
+        attendance_today_percent = round((unique_students_attended_today_count / total_students) * 100, 1) if total_students > 0 else 0
 
-    grades_present = db.session.query(func.distinct(StudentDetail.grade)).filter(StudentDetail.school_id == current_user.id).order_by(StudentDetail.grade).all()
-    grades_present = [g[0] for g in grades_present if g[0] is not None]
-    nutrition_compliance_labels = [f'Grade {g}' for g in grades_present]
-    nutrition_compliance_data = []
-    for grade in grades_present:
-        students_in_grade_ids = [s.id for s in school_students if s.grade == grade]
-        month_ago = today - timedelta(days=30)
-        total_possible_meals_per_student_month = 3 * 30
-        total_possible_grade_meals_month = len(students_in_grade_ids) * total_possible_meals_per_student_month
-        actual_meals_attended_grade = db.session.query(func.sum((Attendance.ate_breakfast.cast(db.Integer)) + (Attendance.ate_lunch.cast(db.Integer)) + (Attendance.ate_dinner.cast(db.Integer)))).filter(
-            Attendance.student_id.in_(students_in_grade_ids), Attendance.attendance_date >= month_ago
-        ).scalar() or 0
-        grade_nutrition_score = round((actual_meals_attended_grade / total_possible_grade_meals_month) * 100, 1) if total_possible_grade_meals_month > 0 else 0
-        nutrition_compliance_data.append(grade_nutrition_score)
+        seven_days_ago = today - timedelta(days=6)
+        total_possible_student_days_7days = total_students * 7 
 
-    # --- 3. Program Impact Data & Class/Grade Insights ---
-    health_impact_data = [{'metric': 'BMI Improvement %', 'current_value': 'N/A', 'change': 'N/A'}, {'metric': 'Attendance Rise', 'current_value': f'{avg_weekly_attendance_percent}%', 'change': 'N/A'}]
-    class_insights = []
-    for grade in grades_present:
-        students_in_grade = [s for s in school_students if s.grade == grade]
-        students_in_grade_ids = [s.id for s in students_in_grade]
-        total_possible_grade_student_days_7days = len(students_in_grade) * 7
-        
-        # CHANGED: This is the second corrected line
-        unique_grade_student_days_attended_7days = db.session.query(func.count(func.distinct(Attendance.student_id.cast(db.String) + ',' + Attendance.attendance_date.cast(db.String)))).filter(
-            Attendance.student_id.in_(students_in_grade_ids),
+        unique_student_days_attended_7days = db.session.query(func.count(func.distinct(Attendance.student_id.cast(db.String) + ',' + Attendance.attendance_date.cast(db.String)))).filter(
+            Attendance.student_id.in_(student_ids),
             Attendance.attendance_date >= seven_days_ago,
             or_(Attendance.ate_breakfast, Attendance.ate_lunch, Attendance.ate_dinner)
         ).scalar() or 0
         
-        avg_grade_attendance = round((unique_grade_student_days_attended_7days / total_possible_grade_student_days_7days) * 100, 1) if total_possible_grade_student_days_7days > 0 else 0
-        avg_grade_nutrition_score = next((score for i, g in enumerate(grades_present) if g == grade for score in [nutrition_compliance_data[i]]), 0)
-        class_insights.append({'name': f'Grade {grade}', 'students': len(students_in_grade), 'avg_attendance': avg_grade_attendance, 'avg_nutrition_score': avg_grade_nutrition_score})
+        avg_weekly_attendance_percent = round((unique_student_days_attended_7days / total_possible_student_days_7days) * 100, 1) if total_possible_student_days_7days > 0 else 0
 
-    return render_template('school_insights.html', 
-                           total_students=total_students, attendance_today_percent=attendance_today_percent,
-                           avg_weekly_attendance_percent=avg_weekly_attendance_percent, total_meals_this_month=meals_this_month_count,
-                           attendance_labels=attendance_labels, attendance_data=attendance_data,
-                           meal_distribution_data=meal_distribution_data, nutrition_compliance_labels=nutrition_compliance_labels,
-                           nutrition_compliance_data=nutrition_compliance_data, health_impact_data=health_impact_data, class_insights=class_insights)
+        current_month, current_year = today.month, today.year
+        meals_this_month_count = db.session.query(func.sum(
+            (Attendance.ate_breakfast.cast(db.Integer)) +
+            (Attendance.ate_lunch.cast(db.Integer)) +
+            (Attendance.ate_dinner.cast(db.Integer))
+        )).filter(
+            Attendance.student_id.in_(student_ids),
+            extract('month', Attendance.attendance_date) == current_month,
+            extract('year', Attendance.attendance_date) == current_year
+        ).scalar() or 0
+
+        # --- 2. Chart Data ---
+        attendance_labels = [(today - timedelta(days=i)).strftime('%a %d') for i in range(6, -1, -1)]
+        attendance_data = []
+        for i in range(6, -1, -1):
+            day = today - timedelta(days=i)
+            attended_on_day_count = db.session.query(func.count(func.distinct(Attendance.student_id))).filter(
+                Attendance.student_id.in_(student_ids),
+                Attendance.attendance_date == day,
+                or_(Attendance.ate_breakfast, Attendance.ate_lunch, Attendance.ate_dinner)
+            ).scalar() or 0
+            daily_percent = round((attended_on_day_count / total_students) * 100, 1) if total_students > 0 else 0
+            attendance_data.append(daily_percent)
+
+        breakfast_served_today = db.session.query(func.count(Attendance.id)).filter(Attendance.student_id.in_(student_ids), Attendance.attendance_date == today, Attendance.ate_breakfast == True).scalar() or 0
+        lunch_served_today = db.session.query(func.count(Attendance.id)).filter(Attendance.student_id.in_(student_ids), Attendance.attendance_date == today, Attendance.ate_lunch == True).scalar() or 0
+        dinner_served_today = db.session.query(func.count(Attendance.id)).filter(Attendance.student_id.in_(student_ids), Attendance.attendance_date == today, Attendance.ate_dinner == True).scalar() or 0
+        meal_distribution_data = [breakfast_served_today, lunch_served_today, dinner_served_today]
+
+        grades_present = db.session.query(func.distinct(StudentDetail.grade)).filter(StudentDetail.school_id == school_scope_id).order_by(StudentDetail.grade).all()
+        grades_present = [g[0] for g in grades_present if g[0] is not None]
+        nutrition_compliance_labels = [f'Grade {g}' for g in grades_present]
+        nutrition_compliance_data = []
+        for grade in grades_present:
+            students_in_grade_ids = [s.id for s in school_students if s.grade == grade]
+            month_ago = today - timedelta(days=30)
+            total_possible_meals_per_student_month = 3 * 30
+            total_possible_grade_meals_month = len(students_in_grade_ids) * total_possible_meals_per_student_month
+            actual_meals_attended_grade = db.session.query(func.sum((Attendance.ate_breakfast.cast(db.Integer)) + (Attendance.ate_lunch.cast(db.Integer)) + (Attendance.ate_dinner.cast(db.Integer)))).filter(
+                Attendance.student_id.in_(students_in_grade_ids), Attendance.attendance_date >= month_ago
+            ).scalar() or 0
+            grade_nutrition_score = round((actual_meals_attended_grade / total_possible_grade_meals_month) * 100, 1) if total_possible_grade_meals_month > 0 else 0
+            nutrition_compliance_data.append(grade_nutrition_score)
+
+        # --- 3. Program Impact Data & Class/Grade Insights ---
+        health_impact_data = [{'metric': 'BMI Improvement %', 'current_value': 'N/A', 'change': 'N/A'}, {'metric': 'Attendance Rise', 'current_value': f'{avg_weekly_attendance_percent}%', 'change': 'N/A'}]
+        class_insights = []
+        for grade in grades_present:
+            students_in_grade = [s for s in school_students if s.grade == grade]
+            students_in_grade_ids = [s.id for s in students_in_grade]
+            total_possible_grade_student_days_7days = len(students_in_grade) * 7
+            
+            unique_grade_student_days_attended_7days = db.session.query(func.count(func.distinct(Attendance.student_id.cast(db.String) + ',' + Attendance.attendance_date.cast(db.String)))).filter(
+                Attendance.student_id.in_(students_in_grade_ids),
+                Attendance.attendance_date >= seven_days_ago,
+                or_(Attendance.ate_breakfast, Attendance.ate_lunch, Attendance.ate_dinner)
+            ).scalar() or 0
+            
+            avg_grade_attendance = round((unique_grade_student_days_attended_7days / total_possible_grade_student_days_7days) * 100, 1) if total_possible_grade_student_days_7days > 0 else 0
+            avg_grade_nutrition_score = next((score for i, g in enumerate(grades_present) if g == grade for score in [nutrition_compliance_data[i]]), 0)
+            class_insights.append({'name': f'Grade {grade}', 'students': len(students_in_grade), 'avg_attendance': avg_grade_attendance, 'avg_nutrition_score': avg_grade_nutrition_score})
+
+        low_attendance_students = []
+        for student in school_students:
+            records = Attendance.query.filter_by(student_id=student.id).all()
+            total_records = len(records)
+            if total_records == 0:
+                continue
+            present_records = sum(1 for record in records if record.was_present)
+            percent = round((present_records / total_records) * 100, 1)
+            if percent < 75:
+                low_attendance_students.append({'name': student.full_name, 'class': f'Grade {student.grade}-{student.section}', 'attendance_percent': percent})
+
+        return render_template('school_insights.html', 
+                               total_students=total_students, attendance_today_percent=attendance_today_percent,
+                               avg_weekly_attendance_percent=avg_weekly_attendance_percent, total_meals_this_month=meals_this_month_count,
+                               attendance_labels=attendance_labels, attendance_data=attendance_data,
+                               meal_distribution_data=meal_distribution_data, nutrition_compliance_labels=nutrition_compliance_labels,
+                               nutrition_compliance_data=nutrition_compliance_data, health_impact_data=health_impact_data, class_insights=class_insights,
+                               low_attendance_students=low_attendance_students[:10])
+    except Exception:
+        _rollback_session()
+        logger.exception("Failed to load insights dashboard for school_id=%s", current_user.id)
+        flash('Insights could not be fully loaded right now.', 'warning')
+        return render_template('school_insights.html', **_empty_insights_context(today))
 
 # --- NEW: AI Meal Plan Generator Page ---
 @main.route('/meal-generator', methods=['GET', 'POST'])
 @limiter.limit('6 per minute', methods=['POST'])
 @login_required
 def meal_generator():
-    if current_user.role != 'student':
+    if not current_user.has_role(User.ROLE_USER):
         flash("This page is for students.", "info")
         return redirect(url_for('main.dashboard'))
 
@@ -1699,7 +2311,7 @@ def meal_generator():
     # This block handles the GET request (initial page load)
     if request.method != 'POST':
         # Corrected: Render student_meals.html for the initial GET request
-        return render_template('student_meals.html', meal_plan=None, form_data=None)
+        return render_template('student_meals.html', student=student, meal_plan=None, form_data=None)
 
     # This block handles the POST request (when the form is submitted)
     form_data = request.form.to_dict()
@@ -1710,7 +2322,7 @@ def meal_generator():
 
     if not diet_type or not meal_count:
         flash('Please choose a diet type and meal count before generating a plan.', 'danger')
-        return render_template('student_meals.html', meal_plan=None, form_data=form_data)
+        return render_template('student_meals.html', student=student, meal_plan=None, form_data=form_data)
 
     latest_metric = student.health_metrics.order_by(HealthMetric.record_date.desc()).first()
     latest_height = latest_metric.height_cm if latest_metric else 'Not provided'
@@ -1747,26 +2359,30 @@ def meal_generator():
     ]
     """
     try:
+        if not check_ai_quota(current_user, 'meal_generator', current_app.config):
+            raise ValueError('Daily meal generator quota reached.')
         ai_payload = _call_gemini_json(
             prompt,
             generation_config=_meal_plan_generation_config(),
             log_label=f'Meal plan for student {student.id}',
         )
         meal_plan = _coerce_meal_plan_payload(ai_payload, expected_meals=_meal_count_number(meal_count))
+        _log_ai_usage(current_user, 'meal_generator', 'success', request_units=estimate_request_units(prompt), details={'student_id': student.id})
         
         # Corrected: Render student_meals.html after generating the plan
-        return render_template('student_meals.html', meal_plan=meal_plan, form_data=form_data)
+        return render_template('student_meals.html', student=student, meal_plan=meal_plan, form_data=form_data)
         
     except Exception as e:
         logger.warning("AI meal generator error for student %s: %s", student.id, e)
         fallback_plan = _fallback_meal_plan(diet_type, meal_count, combined_allergies, dislikes)
+        _log_ai_usage(current_user, 'meal_generator', 'fallback', request_units=estimate_request_units(prompt), details={'student_id': student.id})
         flash("The AI service is unavailable right now, so we generated a meal plan locally instead.", "warning")
-        return render_template('student_meals.html', meal_plan=fallback_plan, form_data=form_data)
+        return render_template('student_meals.html', student=student, meal_plan=fallback_plan, form_data=form_data)
 
 @main.route('/awareness')
 @login_required
 def awareness_page():
-    if current_user.role != 'student':
+    if not current_user.has_role(User.ROLE_USER):
         return redirect(url_for('main.dashboard'))
 
     # Demo data for the awareness content from official sources
@@ -1833,7 +2449,7 @@ def awareness_page():
 @main.route('/recipe-finder')
 @login_required
 def recipe_finder():
-    if current_user.role != 'student':
+    if not current_user.has_role(User.ROLE_USER):
         return redirect(url_for('main.dashboard'))
     return redirect(url_for('main.meal_generator'))
 
@@ -1842,7 +2458,7 @@ def recipe_finder():
 @limiter.limit('20 per minute')
 @login_required
 def get_ai_recipe():
-    if current_user.role != 'student':
+    if not current_user.has_role(User.ROLE_USER):
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
     data = request.get_json(silent=True) or {}
@@ -1852,12 +2468,16 @@ def get_ai_recipe():
         return jsonify({'success': False, 'error': 'Food name is required.'}), 400
 
     try:
+        if not check_ai_quota(current_user, 'recipe_lookup', current_app.config):
+            raise ValueError('Daily recipe quota reached.')
         recipe_data = copy.deepcopy(_cached_ai_recipe_lookup(food_name.casefold()))
+        _log_ai_usage(current_user, 'recipe_lookup', 'success', request_units=estimate_request_units(food_name), details={'food_name': food_name})
         return jsonify({'success': True, 'data': recipe_data})
 
     except Exception as e:
         logger.warning("Error in get_ai_recipe for '%s': %s", food_name, e)
         fallback_recipe = _fallback_recipe_lookup(food_name)
+        _log_ai_usage(current_user, 'recipe_lookup', 'fallback', request_units=estimate_request_units(food_name), details={'food_name': food_name})
         return jsonify({'success': True, 'data': fallback_recipe, 'source': 'fallback'})
 
 
@@ -1865,22 +2485,26 @@ def get_ai_recipe():
 @limiter.limit('20 per minute')
 @login_required
 def get_ai_nutrition():
-    if current_user.role != 'school':
+    if not current_user.can_manage_meals_effective:
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
     food_name = _normalize_food_query((request.get_json(silent=True) or {}).get('food_name', ''))
     if not food_name:
         return jsonify({'success': False, 'error': 'Food name is required'}), 400
 
-    local_food = _find_exact_food(food_name)
+    local_food = _find_exact_food(food_name, _school_scope_id())
     if local_food:
         return jsonify({'success': True, 'data': _food_to_nutrition_payload(local_food), 'source': 'local'})
 
     try:
+        if not check_ai_quota(current_user, 'nutrition_lookup', current_app.config):
+            raise ValueError('Daily nutrition lookup quota reached.')
         nutrition_data = copy.deepcopy(_cached_ai_nutrition_lookup(food_name.casefold()))
+        _log_ai_usage(current_user, 'nutrition_lookup', 'success', request_units=estimate_request_units(food_name), details={'food_name': food_name})
         return jsonify({'success': True, 'data': nutrition_data, 'source': 'ai'})
 
     except Exception as e:
         logger.warning("Error in get_ai_nutrition for '%s': %s", food_name, e)
         fallback_nutrition = _fallback_nutrition_lookup(food_name)
+        _log_ai_usage(current_user, 'nutrition_lookup', 'fallback', request_units=estimate_request_units(food_name), details={'food_name': food_name})
         return jsonify({'success': True, 'data': fallback_nutrition, 'source': 'fallback'})
