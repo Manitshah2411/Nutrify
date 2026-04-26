@@ -11,6 +11,9 @@ from app.models import Food, User
 logger = logging.getLogger(__name__)
 
 INITIAL_SCHEMA_REVISION = "63c10e73092c"
+LEGACY_CORE_REVISION_COLUMNS = {
+    "users": {"email"},
+}
 
 DEFAULT_FOOD_ITEMS = [
     {"name": "Apple", "calories": 95, "protein": 0.5, "carbs": 25, "fats": 0.3},
@@ -66,10 +69,23 @@ def _existing_column_names(table_name):
     return {column["name"] for column in inspector.get_columns(table_name)}
 
 
+def _schema_missing_enterprise_columns():
+    missing_columns = {}
+    for table_name, required_columns in LEGACY_CORE_REVISION_COLUMNS.items():
+        existing_columns = _existing_column_names(table_name)
+        if not existing_columns:
+            continue
+        missing = sorted(required_columns - existing_columns)
+        if missing:
+            missing_columns[table_name] = missing
+    return missing_columns
+
+
 def ensure_migration_state(app):
     """Stamp legacy databases so Flask-Migrate can upgrade them safely."""
     with app.app_context():
         table_names = _existing_table_names()
+        schema_missing_columns = _schema_missing_enterprise_columns()
         if not table_names:
             logger.info("Database is empty; no migration stamp needed before upgrade.")
             return {"stamped": False, "revision": None, "reason": "empty_database"}
@@ -78,6 +94,25 @@ def ensure_migration_state(app):
             current_revision = db.session.execute(
                 text("SELECT version_num FROM alembic_version LIMIT 1")
             ).scalar()
+            if schema_missing_columns and current_revision != INITIAL_SCHEMA_REVISION:
+                logger.warning(
+                    "Database revision '%s' does not match the live schema. Missing columns: %s. Re-stamping to %s.",
+                    current_revision or "<empty>",
+                    schema_missing_columns,
+                    INITIAL_SCHEMA_REVISION,
+                )
+                with db.engine.begin() as connection:
+                    connection.execute(text("DELETE FROM alembic_version"))
+                    connection.execute(
+                        text("INSERT INTO alembic_version (version_num) VALUES (:version_num)"),
+                        {"version_num": INITIAL_SCHEMA_REVISION},
+                    )
+                return {
+                    "stamped": True,
+                    "revision": INITIAL_SCHEMA_REVISION,
+                    "reason": "schema_revision_mismatch",
+                }
+
             logger.info("Database already has Alembic revision '%s'.", current_revision or "<empty>")
             return {"stamped": False, "revision": current_revision, "reason": "already_versioned"}
 
@@ -85,11 +120,10 @@ def ensure_migration_state(app):
             logger.info("Database has tables but no core schema; leaving Alembic unstamped.")
             return {"stamped": False, "revision": None, "reason": "no_core_schema"}
 
-        users_columns = _existing_column_names("users")
-        if "email" in users_columns:
-            target_revision = CURRENT_SCHEMA_REVISION
-        else:
+        if schema_missing_columns:
             target_revision = INITIAL_SCHEMA_REVISION
+        else:
+            target_revision = CURRENT_SCHEMA_REVISION
 
         logger.warning(
             "Stamping unversioned database at revision %s before running migrations.",

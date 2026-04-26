@@ -16,4 +16,4 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["gunicorn", "-c", "backend/gunicorn.conf.py", "backend.wsgi:application"]
+CMD ["./backend/bin/docker_start.sh"]

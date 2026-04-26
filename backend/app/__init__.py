@@ -9,6 +9,7 @@ from flask_cors import CORS
 from flask_login import LoginManager, current_user
 from flask_wtf.csrf import CSRFError
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -37,6 +38,10 @@ def load_user(user_id):
             return None
         return user
     except (TypeError, ValueError):
+        return None
+    except SQLAlchemyError:
+        db.session.rollback()
+        logger.warning("Failed to load session user %r due to a database error.", user_id, exc_info=True)
         return None
 
 

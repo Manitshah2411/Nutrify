@@ -1,5 +1,6 @@
 import pytest
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import ProgrammingError
 
 import app as app_module
 from app import create_app
@@ -248,3 +249,72 @@ def test_ensure_migration_state_stamps_current_revision_when_schema_is_already_e
             "reason": "legacy_database",
         }
         assert db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == CURRENT_SCHEMA_REVISION
+
+
+def test_ensure_migration_state_realigns_misstamped_revision(tmp_path):
+    database_path = tmp_path / "misstamped.db"
+
+    class MisstampedSQLiteConfig:
+        APP_ENV = "testing"
+        TESTING = True
+        SECRET_KEY = "misstamped-secret"
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{database_path}"
+        SQLALCHEMY_TRACK_MODIFICATIONS = False
+        WTF_CSRF_ENABLED = False
+        RATELIMIT_ENABLED = False
+
+    app = create_app(MisstampedSQLiteConfig)
+
+    with app.app_context():
+        with db.engine.begin() as connection:
+            connection.execute(text("""
+                CREATE TABLE users (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    username VARCHAR(80) NOT NULL UNIQUE,
+                    password_hash VARCHAR(256) NOT NULL,
+                    role VARCHAR(20) NOT NULL,
+                    school_name VARCHAR(120)
+                )
+            """))
+            connection.execute(text("""
+                CREATE TABLE alembic_version (
+                    version_num VARCHAR(32) NOT NULL PRIMARY KEY
+                )
+            """))
+            connection.execute(
+                text("INSERT INTO alembic_version (version_num) VALUES (:version_num)"),
+                {"version_num": CURRENT_SCHEMA_REVISION},
+            )
+
+        result = ensure_migration_state(app)
+
+        assert result == {
+            "stamped": True,
+            "revision": INITIAL_SCHEMA_REVISION,
+            "reason": "schema_revision_mismatch",
+        }
+        assert db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == INITIAL_SCHEMA_REVISION
+
+
+def test_load_user_handles_database_programming_error(monkeypatch):
+    class SessionRecoveryConfig:
+        APP_ENV = "testing"
+        TESTING = True
+        SECRET_KEY = "session-secret"
+        SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+        SQLALCHEMY_TRACK_MODIFICATIONS = False
+        WTF_CSRF_ENABLED = False
+        RATELIMIT_ENABLED = False
+
+    app = create_app(SessionRecoveryConfig)
+
+    class FakeOrigError(Exception):
+        pass
+
+    def broken_get(*args, **kwargs):
+        raise ProgrammingError("SELECT users.email FROM users", {}, FakeOrigError("missing column"))
+
+    with app.app_context():
+        monkeypatch.setattr(app_module.db.session, "get", broken_get)
+
+        assert app_module.load_user("1") is None
