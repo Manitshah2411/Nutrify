@@ -22,7 +22,7 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_REVISION = "5e076f0f1815"
+CURRENT_SCHEMA_REVISION = "4a287724d2e0"
 SQLITE_TIMESTAMP_SENTINEL = "1970-01-01 00:00:00"
 
 

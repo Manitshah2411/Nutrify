@@ -6,7 +6,7 @@ import app as app_module
 from app import create_app
 from app.bootstrap import CURRENT_SCHEMA_REVISION, bootstrap_database
 from app.models import Food, User, db
-from manage import INITIAL_SCHEMA_REVISION, ensure_migration_state, seed_database
+from manage import ENTERPRISE_FOUNDATION_REVISION, INITIAL_SCHEMA_REVISION, ensure_migration_state, seed_database
 
 
 class ProductionLikeConfig:
@@ -249,6 +249,56 @@ def test_ensure_migration_state_stamps_current_revision_when_schema_is_already_e
             "reason": "legacy_database",
         }
         assert db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == CURRENT_SCHEMA_REVISION
+
+
+def test_ensure_migration_state_stamps_enterprise_foundation_for_partially_bootstrapped_schema(tmp_path):
+    database_path = tmp_path / "partial-enterprise.db"
+
+    class PartialEnterpriseSQLiteConfig:
+        APP_ENV = "testing"
+        TESTING = True
+        SECRET_KEY = "partial-enterprise-secret"
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{database_path}"
+        SQLALCHEMY_TRACK_MODIFICATIONS = False
+        WTF_CSRF_ENABLED = False
+        RATELIMIT_ENABLED = False
+
+    app = create_app(PartialEnterpriseSQLiteConfig)
+
+    with app.app_context():
+        with db.engine.begin() as connection:
+            connection.execute(text("""
+                CREATE TABLE users (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    username VARCHAR(80) NOT NULL UNIQUE,
+                    password_hash VARCHAR(256) NOT NULL,
+                    role VARCHAR(20) NOT NULL,
+                    school_name VARCHAR(120)
+                )
+            """))
+            connection.execute(text("""
+                CREATE TABLE ai_usage_logs (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    school_id INTEGER,
+                    user_id INTEGER,
+                    feature VARCHAR(64) NOT NULL,
+                    status VARCHAR(32) NOT NULL,
+                    request_units INTEGER NOT NULL,
+                    latency_ms INTEGER,
+                    details JSON,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL
+                )
+            """))
+
+        result = ensure_migration_state(app)
+
+        assert result == {
+            "stamped": True,
+            "revision": ENTERPRISE_FOUNDATION_REVISION,
+            "reason": "legacy_database",
+        }
+        assert db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == ENTERPRISE_FOUNDATION_REVISION
 
 
 def test_ensure_migration_state_realigns_misstamped_revision(tmp_path):

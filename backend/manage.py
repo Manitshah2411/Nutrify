@@ -11,8 +11,19 @@ from app.models import Food, User
 logger = logging.getLogger(__name__)
 
 INITIAL_SCHEMA_REVISION = "63c10e73092c"
+ENTERPRISE_FOUNDATION_REVISION = "5e076f0f1815"
 LEGACY_CORE_REVISION_COLUMNS = {
     "users": {"email"},
+}
+ENTERPRISE_SENTINEL_TABLES = {
+    "ai_usage_logs",
+    "approval_requests",
+    "audit_logs",
+    "meal_templates",
+    "notifications",
+    "password_reset_tokens",
+    "platform_jobs",
+    "user_feedback",
 }
 
 DEFAULT_FOOD_ITEMS = [
@@ -81,11 +92,16 @@ def _schema_missing_enterprise_columns():
     return missing_columns
 
 
+def _has_enterprise_tables(table_names):
+    return bool(ENTERPRISE_SENTINEL_TABLES.intersection(table_names))
+
+
 def ensure_migration_state(app):
     """Stamp legacy databases so Flask-Migrate can upgrade them safely."""
     with app.app_context():
         table_names = _existing_table_names()
         schema_missing_columns = _schema_missing_enterprise_columns()
+        has_enterprise_tables = _has_enterprise_tables(table_names)
         if not table_names:
             logger.info("Database is empty; no migration stamp needed before upgrade.")
             return {"stamped": False, "revision": None, "reason": "empty_database"}
@@ -94,22 +110,27 @@ def ensure_migration_state(app):
             current_revision = db.session.execute(
                 text("SELECT version_num FROM alembic_version LIMIT 1")
             ).scalar()
-            if schema_missing_columns and current_revision != INITIAL_SCHEMA_REVISION:
+            if schema_missing_columns:
+                target_revision = ENTERPRISE_FOUNDATION_REVISION if has_enterprise_tables else INITIAL_SCHEMA_REVISION
+            else:
+                target_revision = current_revision
+
+            if schema_missing_columns and current_revision != target_revision:
                 logger.warning(
                     "Database revision '%s' does not match the live schema. Missing columns: %s. Re-stamping to %s.",
                     current_revision or "<empty>",
                     schema_missing_columns,
-                    INITIAL_SCHEMA_REVISION,
+                    target_revision,
                 )
                 with db.engine.begin() as connection:
                     connection.execute(text("DELETE FROM alembic_version"))
                     connection.execute(
                         text("INSERT INTO alembic_version (version_num) VALUES (:version_num)"),
-                        {"version_num": INITIAL_SCHEMA_REVISION},
+                        {"version_num": target_revision},
                     )
                 return {
                     "stamped": True,
-                    "revision": INITIAL_SCHEMA_REVISION,
+                    "revision": target_revision,
                     "reason": "schema_revision_mismatch",
                 }
 
@@ -120,7 +141,9 @@ def ensure_migration_state(app):
             logger.info("Database has tables but no core schema; leaving Alembic unstamped.")
             return {"stamped": False, "revision": None, "reason": "no_core_schema"}
 
-        if schema_missing_columns:
+        if has_enterprise_tables:
+            target_revision = ENTERPRISE_FOUNDATION_REVISION
+        elif schema_missing_columns:
             target_revision = INITIAL_SCHEMA_REVISION
         else:
             target_revision = CURRENT_SCHEMA_REVISION
