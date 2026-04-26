@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import logging
 
 from sqlalchemy import inspect, text
@@ -60,12 +61,14 @@ def _bootstrap_school_credentials(app):
     if not password and not _production_mode(app):
         password = "school123"
 
-    if not password:
-        raise RuntimeError(
-            "DEFAULT_SCHOOL_PASSWORD must be set before seeding the initial school account."
-        )
-
     return username, password, school_name
+
+
+def _generated_bootstrap_school_password(app, username):
+    secret_key = app.config.get("SECRET_KEY", "")
+    seed = f"{secret_key}:{username}:bootstrap-school"
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    return f"Nutrify-{digest[:12]}"
 
 
 def _existing_table_names():
@@ -174,10 +177,20 @@ def seed_database(app):
         summary = {
             "school_created": False,
             "foods_added": 0,
+            "school_password_generated": False,
         }
 
         school_username, school_password, school_name = _bootstrap_school_credentials(app)
-        if not User.query.filter_by(username=school_username).first():
+        existing_school = User.query.filter_by(username=school_username).first()
+        if existing_school is None:
+            if not school_password:
+                school_password = _generated_bootstrap_school_password(app, school_username)
+                summary["school_password_generated"] = True
+                logger.warning(
+                    "DEFAULT_SCHOOL_PASSWORD is not set. Generated a deterministic bootstrap password for '%s' from SECRET_KEY.",
+                    school_username,
+                )
+
             logger.info("Creating the bootstrap school account '%s'.", school_username)
             school_user = User(username=school_username, role="school", school_name=school_name)
             school_user.set_password(school_password)
@@ -204,10 +217,16 @@ def seed_database(app):
 
         if summary["school_created"]:
             if _production_mode(app):
-                logger.info(
-                    "Bootstrap school account created for '%s'. Retrieve DEFAULT_SCHOOL_PASSWORD from your deployment environment variables and rotate it after first login.",
-                    school_username,
-                )
+                if summary["school_password_generated"]:
+                    logger.info(
+                        "Bootstrap school account created for '%s' using a fallback password derived from SECRET_KEY. Set DEFAULT_SCHOOL_PASSWORD to rotate it explicitly.",
+                        school_username,
+                    )
+                else:
+                    logger.info(
+                        "Bootstrap school account created for '%s'. Retrieve DEFAULT_SCHOOL_PASSWORD from your deployment environment variables and rotate it after first login.",
+                        school_username,
+                    )
             else:
                 logger.info(
                     "You can log in with the school account: '%s' / '%s'",

@@ -6,7 +6,13 @@ import app as app_module
 from app import create_app
 from app.bootstrap import CURRENT_SCHEMA_REVISION, bootstrap_database
 from app.models import Food, User, db
-from manage import ENTERPRISE_FOUNDATION_REVISION, INITIAL_SCHEMA_REVISION, ensure_migration_state, seed_database
+from manage import (
+    ENTERPRISE_FOUNDATION_REVISION,
+    INITIAL_SCHEMA_REVISION,
+    _generated_bootstrap_school_password,
+    ensure_migration_state,
+    seed_database,
+)
 
 
 class ProductionLikeConfig:
@@ -63,6 +69,60 @@ def test_login_page_hides_demo_credentials_in_production():
     assert response.status_code == 200
     assert b"Demo Account" not in response.data
     assert b"school123" not in response.data
+
+
+def test_seed_database_generates_bootstrap_password_in_production_when_missing():
+    class ProductionMissingPasswordConfig:
+        APP_ENV = "production"
+        TESTING = True
+        SECRET_KEY = "prod-secret"
+        SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+        SQLALCHEMY_TRACK_MODIFICATIONS = False
+        WTF_CSRF_ENABLED = False
+        RATELIMIT_ENABLED = False
+        DEFAULT_SCHOOL_USERNAME = "BestSchool"
+        DEFAULT_SCHOOL_NAME = "The Best School"
+        DEFAULT_SCHOOL_PASSWORD = ""
+
+    app = create_app(ProductionMissingPasswordConfig)
+    with app.app_context():
+        db.create_all()
+
+        summary = seed_database(app)
+        user = User.query.filter_by(username="BestSchool").one()
+
+    assert summary["school_created"] is True
+    assert summary["school_password_generated"] is True
+    assert user.check_password(_generated_bootstrap_school_password(app, "BestSchool"))
+
+
+def test_seed_database_does_not_require_password_when_bootstrap_school_exists():
+    class ProductionMissingPasswordConfig:
+        APP_ENV = "production"
+        TESTING = True
+        SECRET_KEY = "prod-secret"
+        SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+        SQLALCHEMY_TRACK_MODIFICATIONS = False
+        WTF_CSRF_ENABLED = False
+        RATELIMIT_ENABLED = False
+        DEFAULT_SCHOOL_USERNAME = "BestSchool"
+        DEFAULT_SCHOOL_NAME = "The Best School"
+        DEFAULT_SCHOOL_PASSWORD = ""
+
+    app = create_app(ProductionMissingPasswordConfig)
+    with app.app_context():
+        db.create_all()
+        existing_user = User(username="BestSchool", role="school", school_name="Existing School")
+        existing_user.set_password("existing-pass")
+        db.session.add(existing_user)
+        db.session.commit()
+
+        summary = seed_database(app)
+        user = User.query.filter_by(username="BestSchool").one()
+
+    assert summary["school_created"] is False
+    assert summary["school_password_generated"] is False
+    assert user.check_password("existing-pass")
 
 
 def test_create_app_rejects_invalid_runtime_configuration():
