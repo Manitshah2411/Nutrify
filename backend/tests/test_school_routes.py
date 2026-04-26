@@ -309,6 +309,27 @@ def test_meal_generator_page_keeps_recipe_finder_and_removes_nutrition_explorer(
     assert b"Nutrition Explorer" not in response.data
 
 
+def test_interactive_pages_allow_alpine_runtime_under_csp(client, app):
+    with app.app_context():
+        school = create_school()
+        create_student(school)
+
+    login(client)
+    school_response = client.get("/dashboard")
+
+    assert school_response.status_code == 200
+    assert "unsafe-eval" in school_response.headers["Content-Security-Policy"]
+    assert b"cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" in school_response.data
+
+    client.post("/logout")
+    login(client, username="student")
+    meal_response = client.get("/meal-generator")
+
+    assert meal_response.status_code == 200
+    assert "unsafe-eval" in meal_response.headers["Content-Security-Policy"]
+    assert b"cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" in meal_response.data
+
+
 def test_get_ai_nutrition_returns_local_food_without_ai_call(client, app, monkeypatch):
     with app.app_context():
         create_school()

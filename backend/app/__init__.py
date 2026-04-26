@@ -157,6 +157,9 @@ def _register_error_handlers(app):
 
 
 def _configure_security_headers(app):
+    # The school dashboard and student tools currently use Alpine's default CDN
+    # runtime with inline expressions. In production, that requires unsafe-eval
+    # or the interactive controls become inert under CSP.
     csp = (
         "default-src 'self'; "
         "base-uri 'self'; "
@@ -165,7 +168,7 @@ def _configure_security_headers(app):
         "img-src 'self' data: https:; "
         "font-src 'self' https://fonts.gstatic.com; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com; "
-        "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "
         "connect-src 'self' https://generativelanguage.googleapis.com https://www.googleapis.com;"
     )
 
