@@ -1,10 +1,11 @@
 import pytest
 from sqlalchemy import inspect, text
 
+import app as app_module
 from app import create_app
 from app.bootstrap import CURRENT_SCHEMA_REVISION, bootstrap_database
 from app.models import Food, User, db
-from manage import seed_database
+from manage import INITIAL_SCHEMA_REVISION, ensure_migration_state, seed_database
 
 
 class ProductionLikeConfig:
@@ -26,6 +27,15 @@ class InvalidRuntimeConfig:
     TESTING = True
     SECRET_KEY = ""
     SQLALCHEMY_DATABASE_URI = "not-a-valid-database-url"
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    WTF_CSRF_ENABLED = False
+    RATELIMIT_ENABLED = False
+
+
+class ProductionNoBootstrapConfig:
+    APP_ENV = "production"
+    SECRET_KEY = "prod-secret"
+    SQLALCHEMY_DATABASE_URI = "postgresql://nutrify:nutrify@localhost:5432/nutrify"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     WTF_CSRF_ENABLED = False
     RATELIMIT_ENABLED = False
@@ -57,6 +67,16 @@ def test_login_page_hides_demo_credentials_in_production():
 def test_create_app_rejects_invalid_runtime_configuration():
     with pytest.raises(RuntimeError):
         create_app(InvalidRuntimeConfig)
+
+
+def test_create_app_skips_auto_bootstrap_in_production(monkeypatch):
+    def fail_bootstrap():
+        raise AssertionError("bootstrap should not run during production worker startup")
+
+    monkeypatch.setattr(app_module, "bootstrap_database", fail_bootstrap)
+    app = create_app(ProductionNoBootstrapConfig)
+
+    assert app.config["APP_ENV"] == "production"
 
 
 def test_bootstrap_repairs_legacy_sqlite_schema(tmp_path):
@@ -154,4 +174,77 @@ def test_bootstrap_repairs_legacy_sqlite_schema(tmp_path):
         assert "email" in {column["name"] for column in inspector.get_columns("users")}
         assert "is_deleted" in {column["name"] for column in inspector.get_columns("users")}
         assert inspector.has_table("notifications")
+        assert db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == CURRENT_SCHEMA_REVISION
+
+
+def test_ensure_migration_state_stamps_legacy_database(tmp_path):
+    database_path = tmp_path / "legacy-stamp.db"
+
+    class LegacySQLiteConfig:
+        APP_ENV = "testing"
+        TESTING = True
+        SECRET_KEY = "legacy-secret"
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{database_path}"
+        SQLALCHEMY_TRACK_MODIFICATIONS = False
+        WTF_CSRF_ENABLED = False
+        RATELIMIT_ENABLED = False
+
+    app = create_app(LegacySQLiteConfig)
+
+    with app.app_context():
+        with db.engine.begin() as connection:
+            connection.execute(text("""
+                CREATE TABLE users (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    username VARCHAR(80) NOT NULL UNIQUE,
+                    password_hash VARCHAR(256) NOT NULL,
+                    role VARCHAR(20) NOT NULL,
+                    school_name VARCHAR(120)
+                )
+            """))
+
+        result = ensure_migration_state(app)
+
+        assert result == {
+            "stamped": True,
+            "revision": INITIAL_SCHEMA_REVISION,
+            "reason": "legacy_database",
+        }
+        assert db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == INITIAL_SCHEMA_REVISION
+
+
+def test_ensure_migration_state_stamps_current_revision_when_schema_is_already_expanded(tmp_path):
+    database_path = tmp_path / "enterprise-stamp.db"
+
+    class ExpandedSQLiteConfig:
+        APP_ENV = "testing"
+        TESTING = True
+        SECRET_KEY = "expanded-secret"
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{database_path}"
+        SQLALCHEMY_TRACK_MODIFICATIONS = False
+        WTF_CSRF_ENABLED = False
+        RATELIMIT_ENABLED = False
+
+    app = create_app(ExpandedSQLiteConfig)
+
+    with app.app_context():
+        with db.engine.begin() as connection:
+            connection.execute(text("""
+                CREATE TABLE users (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    username VARCHAR(80) NOT NULL UNIQUE,
+                    password_hash VARCHAR(256) NOT NULL,
+                    role VARCHAR(20) NOT NULL,
+                    school_name VARCHAR(120),
+                    email VARCHAR(255)
+                )
+            """))
+
+        result = ensure_migration_state(app)
+
+        assert result == {
+            "stamped": True,
+            "revision": CURRENT_SCHEMA_REVISION,
+            "reason": "legacy_database",
+        }
         assert db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == CURRENT_SCHEMA_REVISION

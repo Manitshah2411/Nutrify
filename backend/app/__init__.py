@@ -70,6 +70,9 @@ def _should_auto_bootstrap(app):
     if app.testing or not _env_flag('AUTO_BOOTSTRAP_DATABASE', '1'):
         return False
 
+    if str(app.config.get('APP_ENV', '')).lower() in {'production', 'prod'}:
+        return False
+
     cli_command = sys.argv[1] if len(sys.argv) > 1 else ''
     if cli_command in {'db', 'bootstrap-db'}:
         return False

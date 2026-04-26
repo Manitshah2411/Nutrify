@@ -1,11 +1,16 @@
 import argparse
 import logging
 
+from sqlalchemy import inspect, text
+
 from app import create_app, db
+from app.bootstrap import CURRENT_SCHEMA_REVISION
 from app.models import Food, User
 
 
 logger = logging.getLogger(__name__)
+
+INITIAL_SCHEMA_REVISION = "63c10e73092c"
 
 DEFAULT_FOOD_ITEMS = [
     {"name": "Apple", "calories": 95, "protein": 0.5, "carbs": 25, "fats": 0.3},
@@ -47,6 +52,63 @@ def _bootstrap_school_credentials(app):
         )
 
     return username, password, school_name
+
+
+def _existing_table_names():
+    inspector = inspect(db.engine)
+    return set(inspector.get_table_names())
+
+
+def _existing_column_names(table_name):
+    inspector = inspect(db.engine)
+    if table_name not in inspector.get_table_names():
+        return set()
+    return {column["name"] for column in inspector.get_columns(table_name)}
+
+
+def ensure_migration_state(app):
+    """Stamp legacy databases so Flask-Migrate can upgrade them safely."""
+    with app.app_context():
+        table_names = _existing_table_names()
+        if not table_names:
+            logger.info("Database is empty; no migration stamp needed before upgrade.")
+            return {"stamped": False, "revision": None, "reason": "empty_database"}
+
+        if "alembic_version" in table_names:
+            current_revision = db.session.execute(
+                text("SELECT version_num FROM alembic_version LIMIT 1")
+            ).scalar()
+            logger.info("Database already has Alembic revision '%s'.", current_revision or "<empty>")
+            return {"stamped": False, "revision": current_revision, "reason": "already_versioned"}
+
+        if "users" not in table_names:
+            logger.info("Database has tables but no core schema; leaving Alembic unstamped.")
+            return {"stamped": False, "revision": None, "reason": "no_core_schema"}
+
+        users_columns = _existing_column_names("users")
+        if "email" in users_columns:
+            target_revision = CURRENT_SCHEMA_REVISION
+        else:
+            target_revision = INITIAL_SCHEMA_REVISION
+
+        logger.warning(
+            "Stamping unversioned database at revision %s before running migrations.",
+            target_revision,
+        )
+        with db.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS alembic_version ("
+                    "version_num VARCHAR(32) NOT NULL PRIMARY KEY)"
+                )
+            )
+            connection.execute(text("DELETE FROM alembic_version"))
+            connection.execute(
+                text("INSERT INTO alembic_version (version_num) VALUES (:version_num)"),
+                {"version_num": target_revision},
+            )
+
+        return {"stamped": True, "revision": target_revision, "reason": "legacy_database"}
 
 
 def seed_database(app):
@@ -104,6 +166,7 @@ def _parser():
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("seed", help="Seed idempotent reference data")
+    subparsers.add_parser("ensure-migration-state", help="Stamp legacy databases before running migrations")
     subparsers.add_parser("prepare-deploy", help="Seed reference data after migrations run")
     subparsers.add_parser("init-dev", help="Create tables locally and seed development data")
     subparsers.add_parser("reset-db", help="Drop all tables, recreate them, and seed development data")
@@ -137,6 +200,10 @@ def main(argv=None):
 
     if command in {"seed", "prepare-deploy"}:
         seed_database(app)
+        return
+
+    if command == "ensure-migration-state":
+        ensure_migration_state(app)
         return
 
     parser.error(f"Unknown command: {command}")
