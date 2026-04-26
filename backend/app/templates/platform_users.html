@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block title %}User Management - Nutrify{% endblock %}
+{% block nav_users %}bg-green-50 text-green-700 shadow-sm ring-1 ring-green-100 transition-colors{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+    {% include "_flash_messages.html" %}
+
+    <section class="surface-panel rounded-3xl p-6">
+        <div class="grid gap-8 xl:grid-cols-[minmax(0,1.5fr)_minmax(320px,0.9fr)]">
+            <div>
+                <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Global User Management</p>
+                <h1 class="mt-2 text-3xl font-bold text-gray-900">Users across the platform</h1>
+                <form method="GET" class="mt-6 grid gap-4 md:grid-cols-4">
+                    <input type="text" name="q" value="{{ search }}" placeholder="Search name, username, email" class="rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                    <select name="role" class="rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                        <option value="" {% if not role %}selected{% endif %}>All roles</option>
+                        <option value="master_admin" {% if role == 'master_admin' %}selected{% endif %}>Master Admin</option>
+                        <option value="school_admin" {% if role == 'school_admin' %}selected{% endif %}>School Admin</option>
+                        <option value="user" {% if role == 'user' %}selected{% endif %}>User</option>
+                    </select>
+                    <select name="school_id" class="rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                        <option value="">All schools</option>
+                        {% for school in schools %}
+                            <option value="{{ school.id }}" {% if school_id == school.id %}selected{% endif %}>{{ school.school_name or school.username }}</option>
+                        {% endfor %}
+                    </select>
+                    <select name="status" class="rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                        <option value="active" {% if status == 'active' %}selected{% endif %}>Active</option>
+                        <option value="inactive" {% if status == 'inactive' %}selected{% endif %}>Inactive</option>
+                        <option value="locked" {% if status == 'locked' %}selected{% endif %}>Locked</option>
+                        <option value="deleted" {% if status == 'deleted' %}selected{% endif %}>Deleted</option>
+                        <option value="all" {% if status == 'all' %}selected{% endif %}>All</option>
+                    </select>
+                    <button type="submit" class="md:col-span-4 inline-flex items-center justify-center rounded-xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-black">Apply Filters</button>
+                </form>
+            </div>
+
+            <div class="rounded-2xl border border-gray-200 bg-gray-50 p-5">
+                <h2 class="text-lg font-bold text-gray-900">Create user</h2>
+                <form method="POST" class="mt-4 space-y-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700">Username</label>
+                        <input name="username" required class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700">Full Name</label>
+                        <input name="full_name" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700">Email</label>
+                        <input name="email" type="email" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                    </div>
+                    <div class="grid gap-4 sm:grid-cols-2">
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700">Role</label>
+                            <select name="role" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                                <option value="user">User</option>
+                                <option value="school_admin">School Admin</option>
+                                <option value="master_admin">Master Admin</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700">School</label>
+                            <select name="school_id" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                                <option value="">No school</option>
+                                {% for school in schools %}
+                                    <option value="{{ school.id }}">{{ school.school_name or school.username }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700">Password</label>
+                        <input name="password" type="password" minlength="8" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                        <p class="mt-2 text-xs text-gray-500">Leave blank to generate a temporary password.</p>
+                    </div>
+                    <div class="grid gap-2 sm:grid-cols-2 text-sm text-gray-700">
+                        <label class="flex items-center gap-2"><input type="checkbox" name="can_manage_students" value="1" class="rounded border-gray-300 text-green-600 focus:ring-green-500">Manage students</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" name="can_manage_meals" value="1" class="rounded border-gray-300 text-green-600 focus:ring-green-500">Manage meals</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" name="can_manage_attendance" value="1" class="rounded border-gray-300 text-green-600 focus:ring-green-500">Manage attendance</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" name="can_view_reports" value="1" class="rounded border-gray-300 text-green-600 focus:ring-green-500">View reports</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" name="can_manage_staff" value="1" class="rounded border-gray-300 text-green-600 focus:ring-green-500">Manage staff</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" name="can_approve_workflows" value="1" class="rounded border-gray-300 text-green-600 focus:ring-green-500">Approve workflows</label>
+                    </div>
+                    <button type="submit" class="inline-flex rounded-xl bg-green-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700">Create User</button>
+                </form>
+            </div>
+        </div>
+    </section>
+
+    <section class="surface-panel rounded-3xl p-6">
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">User</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Role</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">School</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">State</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200">
+                    {% for user in users_page.items %}
+                        <tr>
+                            <td class="px-4 py-4 text-sm text-gray-700">
+                                <p class="font-semibold text-gray-900">{{ user.display_name }}</p>
+                                <p class="mt-1 text-xs text-gray-500">{{ user.username }}{% if user.email %} · {{ user.email }}{% endif %}</p>
+                            </td>
+                            <td class="px-4 py-4 text-sm text-gray-600">{{ user.normalized_role|replace('_', ' ')|title }}</td>
+                            <td class="px-4 py-4 text-sm text-gray-600">{{ user.school_account.school_name if user.school_account else (user.school_name if user.is_school_root else 'Platform') }}</td>
+                            <td class="px-4 py-4 text-sm text-gray-600">
+                                {% if user.is_deleted %}
+                                    Archived
+                                {% elif user.is_locked %}
+                                    Locked
+                                {% elif not user.is_active %}
+                                    Inactive
+                                {% else %}
+                                    Active
+                                {% endif %}
+                            </td>
+                            <td class="px-4 py-4 text-sm text-gray-600">
+                                <a href="{{ url_for('platform.platform_user_detail', user_id=user.id) }}" class="font-semibold text-green-700 hover:text-green-800">Open</a>
+                            </td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="5" class="px-4 py-8 text-center text-sm text-gray-500">No users matched the current filters.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="mt-6 flex items-center justify-between gap-4">
+            <p class="text-sm text-gray-500">Page {{ users_page.page }} of {{ users_page.pages }} · {{ users_page.total }} total user(s)</p>
+            <div class="flex gap-3">
+                {% if users_page.has_prev %}
+                    <a href="{{ url_for('platform.platform_users', page=users_page.prev_num, q=search, role=role, school_id=school_id, status=status) }}" class="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:border-green-300 hover:text-green-700">Previous</a>
+                {% endif %}
+                {% if users_page.has_next %}
+                    <a href="{{ url_for('platform.platform_users', page=users_page.next_num, q=search, role=role, school_id=school_id, status=status) }}" class="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:border-green-300 hover:text-green-700">Next</a>
+                {% endif %}
+            </div>
+        </div>
+    </section>
+</div>
+{% endblock %}

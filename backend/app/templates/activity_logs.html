@@ -8,31 +8,66 @@
     {% include "_flash_messages.html" %}
     <section class="surface-panel rounded-3xl p-6">
         <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Audit Trail</p>
-        <h1 class="mt-2 text-3xl font-bold text-gray-900">Recent system activity</h1>
+        <h1 class="mt-2 text-3xl font-bold text-gray-900">{{ 'Recent system activity' if global_mode else 'Recent school activity' }}</h1>
+        {% if global_mode %}
+            <form method="GET" class="mt-6 grid gap-4 md:grid-cols-4">
+                <select name="user_id" class="rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                    <option value="">All users</option>
+                    {% for user in users %}
+                        <option value="{{ user.id }}" {% if selected_user_id == user.id %}selected{% endif %}>{{ user.username }}</option>
+                    {% endfor %}
+                </select>
+                <input type="text" name="action" value="{{ selected_action }}" placeholder="Filter by action" class="rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                <input type="date" name="date_from" value="{{ selected_date_from }}" class="rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                <input type="date" name="date_to" value="{{ selected_date_to }}" class="rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                <button type="submit" class="md:col-span-4 inline-flex items-center justify-center rounded-xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-black">Apply Filters</button>
+            </form>
+        {% endif %}
         <div class="mt-6 overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
                     <tr>
                         <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">When</th>
+                        {% if global_mode %}
+                            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Actor</th>
+                        {% endif %}
                         <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Action</th>
                         <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Entity</th>
                         <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Status</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Metadata</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-200">
                     {% for log in logs %}
                         <tr>
                             <td class="px-4 py-4 text-sm text-gray-600">{{ log.created_at.strftime('%d %b %Y %H:%M') if log.created_at else '' }}</td>
+                            {% if global_mode %}
+                                <td class="px-4 py-4 text-sm text-gray-600">{{ log.actor.username if log.actor else 'System' }}</td>
+                            {% endif %}
                             <td class="px-4 py-4 text-sm font-semibold text-gray-900">{{ log.action|replace('_', ' ')|title }}</td>
                             <td class="px-4 py-4 text-sm text-gray-600">{{ log.entity_type }}{% if log.entity_id %} #{{ log.entity_id }}{% endif %}</td>
                             <td class="px-4 py-4 text-sm text-gray-600">{{ log.status|title }}</td>
+                            <td class="px-4 py-4 text-xs text-gray-500">{{ log.details or {} }}</td>
                         </tr>
                     {% else %}
-                        <tr><td colspan="4" class="px-4 py-8 text-center text-sm text-gray-500">No audit logs found.</td></tr>
+                        <tr><td colspan="{{ 6 if global_mode else 5 }}" class="px-4 py-8 text-center text-sm text-gray-500">No audit logs found.</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
+        {% if global_mode and logs_page %}
+            <div class="mt-6 flex items-center justify-between gap-4">
+                <p class="text-sm text-gray-500">Page {{ logs_page.page }} of {{ logs_page.pages }} · {{ logs_page.total }} audit row(s)</p>
+                <div class="flex gap-3">
+                    {% if logs_page.has_prev %}
+                        <a href="{{ url_for('platform.activity_logs', page=logs_page.prev_num, user_id=selected_user_id, action=selected_action, date_from=selected_date_from, date_to=selected_date_to) }}" class="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:border-green-300 hover:text-green-700">Previous</a>
+                    {% endif %}
+                    {% if logs_page.has_next %}
+                        <a href="{{ url_for('platform.activity_logs', page=logs_page.next_num, user_id=selected_user_id, action=selected_action, date_from=selected_date_from, date_to=selected_date_to) }}" class="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:border-green-300 hover:text-green-700">Next</a>
+                    {% endif %}
+                </div>
+            </div>
+        {% endif %}
     </section>
 </div>
 {% endblock %}

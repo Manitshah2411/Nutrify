@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+
+{% block title %}School Detail - Nutrify{% endblock %}
+{% block nav_schools %}bg-green-50 text-green-700 shadow-sm ring-1 ring-green-100 transition-colors{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+    {% include "_flash_messages.html" %}
+
+    <section class="surface-panel rounded-3xl p-6">
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+                <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">School Detail</p>
+                <h1 class="mt-2 text-3xl font-bold text-gray-900">{{ school.school_name or school.username }}</h1>
+                <p class="mt-2 text-sm text-gray-600">{{ school.username }}{% if school.email %} · {{ school.email }}{% endif %}</p>
+            </div>
+            <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div class="rounded-2xl bg-gray-50 p-4">
+                    <p class="text-xs uppercase tracking-[0.08em] text-gray-500">Users</p>
+                    <p class="mt-2 text-2xl font-bold text-gray-900">{{ dependency_summary.users }}</p>
+                </div>
+                <div class="rounded-2xl bg-gray-50 p-4">
+                    <p class="text-xs uppercase tracking-[0.08em] text-gray-500">Students</p>
+                    <p class="mt-2 text-2xl font-bold text-gray-900">{{ dependency_summary.students }}</p>
+                </div>
+                <div class="rounded-2xl bg-gray-50 p-4">
+                    <p class="text-xs uppercase tracking-[0.08em] text-gray-500">Meal Plans</p>
+                    <p class="mt-2 text-2xl font-bold text-gray-900">{{ dependency_summary.meal_plans }}</p>
+                </div>
+                <div class="rounded-2xl bg-gray-50 p-4">
+                    <p class="text-xs uppercase tracking-[0.08em] text-gray-500">State</p>
+                    <p class="mt-2 text-sm font-semibold text-gray-900">
+                        {% if school.is_deleted %}Archived{% elif school.is_active %}Active{% else %}Inactive{% endif %}
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="grid gap-8 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.85fr)]">
+        <div class="space-y-8">
+            <section class="surface-panel rounded-3xl p-6">
+                <h2 class="text-2xl font-bold text-gray-900">School settings</h2>
+                <form action="{{ url_for('platform.update_platform_school', school_id=school.id) }}" method="POST" class="mt-6 grid gap-4 md:grid-cols-2">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700">School Name</label>
+                        <input name="school_name" value="{{ school.school_name }}" required class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700">Username</label>
+                        <input name="username" value="{{ school.username }}" required class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-sm font-semibold text-gray-700">Email</label>
+                        <input name="email" type="email" value="{{ school.email or '' }}" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                    </div>
+                    <div class="md:col-span-2 flex justify-end">
+                        <button type="submit" class="inline-flex rounded-xl bg-green-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700">Save Changes</button>
+                    </div>
+                </form>
+            </section>
+
+            <section class="surface-panel rounded-3xl p-6">
+                <div class="flex items-center justify-between gap-4">
+                    <h2 class="text-2xl font-bold text-gray-900">Recent school users</h2>
+                    <a href="{{ url_for('platform.export_platform_school_detail_csv', school_id=school.id) }}" class="inline-flex rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:border-green-300 hover:text-green-700">Export CSV</a>
+                </div>
+                <div class="mt-6 overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">User</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Role</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">State</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200">
+                            {% for member in staff_members %}
+                                <tr>
+                                    <td class="px-4 py-4 text-sm text-gray-700">
+                                        <a href="{{ url_for('platform.platform_user_detail', user_id=member.id) }}" class="font-semibold text-gray-900 hover:text-green-700">{{ member.display_name }}</a>
+                                        <p class="mt-1 text-xs text-gray-500">{{ member.username }}</p>
+                                    </td>
+                                    <td class="px-4 py-4 text-sm text-gray-600">{{ member.normalized_role|replace('_', ' ')|title }}</td>
+                                    <td class="px-4 py-4 text-sm text-gray-600">
+                                        {% if member.is_deleted %}Archived{% elif member.is_locked %}Locked{% elif member.is_active %}Active{% else %}Inactive{% endif %}
+                                    </td>
+                                </tr>
+                            {% else %}
+                                <tr><td colspan="3" class="px-4 py-8 text-center text-sm text-gray-500">No users recorded for this school yet.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="surface-panel rounded-3xl p-6">
+                <h2 class="text-2xl font-bold text-gray-900">Recent activity</h2>
+                <div class="mt-6 space-y-3">
+                    {% for log in recent_logs %}
+                        <div class="rounded-2xl border border-gray-200 bg-white p-4">
+                            <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                                <div>
+                                    <p class="text-sm font-semibold text-gray-900">{{ log.action|replace('_', ' ')|title }}</p>
+                                    <p class="mt-1 text-sm text-gray-600">{{ log.entity_type }}{% if log.entity_id %} #{{ log.entity_id }}{% endif %}</p>
+                                </div>
+                                <div class="text-xs text-gray-500">{{ log.created_at.strftime('%d %b %Y %H:%M') if log.created_at else '' }}</div>
+                            </div>
+                        </div>
+                    {% else %}
+                        <p class="text-sm text-gray-500">No school activity recorded yet.</p>
+                    {% endfor %}
+                </div>
+            </section>
+        </div>
+
+        <div class="space-y-8">
+            <section class="surface-panel rounded-3xl p-6">
+                <h2 class="text-2xl font-bold text-gray-900">AI usage</h2>
+                <div class="mt-6 space-y-3">
+                    {% for feature, request_count, request_units in usage_rows %}
+                        <div class="rounded-2xl bg-gray-50 p-4">
+                            <p class="text-sm font-semibold text-gray-900">{{ feature|replace('_', ' ')|title }}</p>
+                            <p class="mt-2 text-sm text-gray-600">{{ request_count }} request(s) · {{ request_units }} unit(s)</p>
+                        </div>
+                    {% else %}
+                        <p class="text-sm text-gray-500">No AI usage recorded for this school yet.</p>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="surface-panel rounded-3xl p-6 space-y-6">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-900">Lifecycle actions</h2>
+                    <p class="mt-2 text-sm text-gray-600">Type <span class="font-semibold text-gray-900">{{ school.username }}</span> to confirm each risky action.</p>
+                </div>
+
+                <form action="{{ url_for('platform.update_platform_school_status', school_id=school.id) }}" method="POST" class="space-y-3 rounded-2xl border border-gray-200 p-4">
+                    <input type="hidden" name="action" value="{{ 'deactivate' if school.is_active else 'activate' }}">
+                    <label class="block text-sm font-semibold text-gray-700">Confirmation</label>
+                    <input name="confirm_value" placeholder="{{ school.username }}" class="block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                    <button type="submit" class="inline-flex rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-600">
+                        {{ 'Deactivate School' if school.is_active else 'Activate School' }}
+                    </button>
+                </form>
+
+                {% if not school.is_deleted %}
+                    <form action="{{ url_for('platform.delete_platform_school', school_id=school.id) }}" method="POST" class="space-y-3 rounded-2xl border border-red-200 bg-red-50 p-4">
+                        <label class="block text-sm font-semibold text-red-900">Archive school</label>
+                        <input name="confirm_value" placeholder="{{ school.username }}" class="block w-full rounded-xl border border-red-200 px-4 py-3 shadow-sm focus:border-red-400 focus:ring-red-400">
+                        <label class="flex items-center gap-3 text-sm text-red-800">
+                            <input type="checkbox" name="confirm_dependencies" value="1" class="rounded border-red-300 text-red-600 focus:ring-red-500">
+                            Confirm archiving linked users, students, plans, and templates.
+                        </label>
+                        <button type="submit" class="inline-flex rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700">Archive School</button>
+                    </form>
+                {% else %}
+                    <form action="{{ url_for('platform.restore_platform_school', school_id=school.id) }}" method="POST" class="space-y-3 rounded-2xl border border-gray-200 p-4">
+                        <button type="submit" class="inline-flex rounded-xl bg-green-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700">Restore School</button>
+                    </form>
+                {% endif %}
+            </section>
+        </div>
+    </section>
+</div>
+{% endblock %}

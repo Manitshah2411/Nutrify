@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}Platform Analytics - Nutrify{% endblock %}
+{% block nav_analytics %}bg-green-50 text-green-700 shadow-sm ring-1 ring-green-100 transition-colors{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+    {% include "_flash_messages.html" %}
+
+    <section class="surface-panel rounded-3xl p-6">
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+                <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">System Analytics</p>
+                <h1 class="mt-2 text-3xl font-bold text-gray-900">Platform trends and comparisons</h1>
+                <p class="mt-3 max-w-3xl text-sm text-gray-600">Attendance, meal activity, school comparisons, and user growth are aggregated into chart-friendly JSON and rendered here.</p>
+            </div>
+            <form method="GET" class="flex items-center gap-3">
+                <label class="text-sm font-semibold text-gray-700" for="days">Window</label>
+                <select id="days" name="days" class="rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                    {% for option in [14, 30, 60, 90] %}
+                        <option value="{{ option }}" {% if days == option %}selected{% endif %}>{{ option }} days</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="inline-flex rounded-xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-black">Refresh</button>
+            </form>
+        </div>
+    </section>
+
+    <section class="grid gap-8 xl:grid-cols-2">
+        <section class="surface-panel rounded-3xl p-6">
+            <h2 class="text-2xl font-bold text-gray-900">Attendance trends</h2>
+            <div id="attendance-trends" class="mt-6 space-y-3 text-sm text-gray-600"></div>
+        </section>
+        <section class="surface-panel rounded-3xl p-6">
+            <h2 class="text-2xl font-bold text-gray-900">Meal usage</h2>
+            <div id="meal-usage" class="mt-6 space-y-3 text-sm text-gray-600"></div>
+        </section>
+    </section>
+
+    <section class="grid gap-8 xl:grid-cols-2">
+        <section class="surface-panel rounded-3xl p-6">
+            <h2 class="text-2xl font-bold text-gray-900">School comparison</h2>
+            <div id="school-comparisons" class="mt-6 space-y-3 text-sm text-gray-600"></div>
+        </section>
+        <section class="surface-panel rounded-3xl p-6">
+            <h2 class="text-2xl font-bold text-gray-900">User growth</h2>
+            <div id="user-growth" class="mt-6 space-y-3 text-sm text-gray-600"></div>
+        </section>
+    </section>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async function () {
+    const response = await fetch("{{ url_for('platform.platform_analytics_data', days=days) }}", {
+        headers: { 'Accept': 'application/json' }
+    });
+    const payload = await response.json();
+
+    function renderRows(targetId, rows, renderRow) {
+        const target = document.getElementById(targetId);
+        if (!target) return;
+        if (!rows || !rows.length) {
+            target.innerHTML = '<p class="text-sm text-gray-500">No data available.</p>';
+            return;
+        }
+        target.innerHTML = rows.map(renderRow).join('');
+    }
+
+    renderRows('attendance-trends', payload.attendance_trends, function (row) {
+        const percent = row.attendance_rows ? Math.round((row.present / row.attendance_rows) * 100) : 0;
+        return `
+            <div class="rounded-2xl bg-gray-50 p-4">
+                <div class="flex items-center justify-between gap-4">
+                    <p class="font-semibold text-gray-900">${row.date}</p>
+                    <p class="text-xs text-gray-500">${row.present}/${row.attendance_rows} present</p>
+                </div>
+                <div class="mt-3 h-2 rounded-full bg-gray-200">
+                    <div class="h-2 rounded-full bg-green-500" style="width:${percent}%"></div>
+                </div>
+            </div>
+        `;
+    });
+
+    renderRows('meal-usage', payload.meal_usage, function (row) {
+        return `
+            <div class="rounded-2xl bg-gray-50 p-4">
+                <div class="flex items-center justify-between gap-4">
+                    <p class="font-semibold text-gray-900">${row.date}</p>
+                    <p class="text-xs text-gray-500">${row.meal_type}</p>
+                </div>
+                <p class="mt-2 text-sm text-gray-600">${row.items} item assignment(s)</p>
+            </div>
+        `;
+    });
+
+    renderRows('school-comparisons', payload.school_comparisons, function (row) {
+        return `
+            <div class="rounded-2xl bg-gray-50 p-4">
+                <p class="font-semibold text-gray-900">${row.school_name}</p>
+                <p class="mt-2 text-sm text-gray-600">${row.students} students · ${row.meal_plans} meal plans · ${row.attendance_rows} attendance rows</p>
+            </div>
+        `;
+    });
+
+    renderRows('user-growth', payload.user_growth, function (row) {
+        return `
+            <div class="rounded-2xl bg-gray-50 p-4">
+                <div class="flex items-center justify-between gap-4">
+                    <p class="font-semibold text-gray-900">${row.date}</p>
+                    <p class="text-sm text-gray-600">${row.users} user(s)</p>
+                </div>
+            </div>
+        `;
+    });
+});
+</script>
+{% endblock %}

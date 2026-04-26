@@ -51,3 +51,25 @@ def broadcast_school_notification(school_scope_id, title, message, *, category='
         add_notification(user_id, title, message, category=category, link=link, school_id=school_scope_id)
     logger.info("Queued %s notifications for school_scope_id=%s", len(user_ids), school_scope_id)
     return len(user_ids)
+
+
+def broadcast_platform_notification(title, message, *, category='info', link=None, school_id=None):
+    if school_id is not None:
+        user_ids = school_portal_user_ids(school_id)
+    else:
+        user_ids = [
+            user_id
+            for (user_id,) in db.session.query(User.id).execution_options(include_deleted=True).filter(
+                User.is_deleted.is_(False)
+            ).all()
+        ]
+
+    for user_id in sorted(set(user_ids)):
+        add_notification(user_id, title, message, category=category, link=link, school_id=school_id)
+
+    logger.info(
+        "Queued %s platform notifications for school_id=%s",
+        len(set(user_ids)),
+        school_id,
+    )
+    return len(set(user_ids))

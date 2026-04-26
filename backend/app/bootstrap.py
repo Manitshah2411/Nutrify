@@ -6,6 +6,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from .models import (
+    AIAccessPolicy,
     AIUsageLog,
     ApprovalRequest,
     AuditLog,
@@ -13,6 +14,7 @@ from .models import (
     MealTemplate,
     Notification,
     PasswordResetToken,
+    PlatformSetting,
     PlatformJob,
     User,
     UserFeedback,
@@ -22,7 +24,7 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_REVISION = "4a287724d2e0"
+CURRENT_SCHEMA_REVISION = "9e3c3915c1c6"
 SQLITE_TIMESTAMP_SENTINEL = "1970-01-01 00:00:00"
 
 
@@ -53,6 +55,8 @@ REQUIRED_TABLES = (
     "approval_requests",
     "ai_usage_logs",
     "platform_jobs",
+    "platform_settings",
+    "ai_access_policies",
     "user_feedback",
 )
 
@@ -62,6 +66,11 @@ LEGACY_SQLITE_COLUMN_PATCHES = {
         "full_name": "ALTER TABLE users ADD COLUMN full_name VARCHAR(120)",
         "school_id": "ALTER TABLE users ADD COLUMN school_id INTEGER",
         "primary_student_id": "ALTER TABLE users ADD COLUMN primary_student_id INTEGER",
+        "is_active": "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1",
+        "is_locked": "ALTER TABLE users ADD COLUMN is_locked BOOLEAN NOT NULL DEFAULT 0",
+        "locked_at": "ALTER TABLE users ADD COLUMN locked_at DATETIME",
+        "force_password_reset": "ALTER TABLE users ADD COLUMN force_password_reset BOOLEAN NOT NULL DEFAULT 0",
+        "ai_access_enabled": "ALTER TABLE users ADD COLUMN ai_access_enabled BOOLEAN NOT NULL DEFAULT 1",
         "last_login_at": "ALTER TABLE users ADD COLUMN last_login_at DATETIME",
         "last_password_change_at": "ALTER TABLE users ADD COLUMN last_password_change_at DATETIME",
         "session_version": "ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 1",
@@ -124,7 +133,10 @@ LEGACY_SQLITE_COLUMN_PATCHES = {
 
 LEGACY_SQLITE_INDEX_PATCHES = (
     ("users", "ix_users_email", "CREATE INDEX IF NOT EXISTS ix_users_email ON users (email)"),
+    ("users", "ix_users_ai_access_enabled", "CREATE INDEX IF NOT EXISTS ix_users_ai_access_enabled ON users (ai_access_enabled)"),
     ("users", "ix_users_is_deleted", "CREATE INDEX IF NOT EXISTS ix_users_is_deleted ON users (is_deleted)"),
+    ("users", "ix_users_is_active", "CREATE INDEX IF NOT EXISTS ix_users_is_active ON users (is_active)"),
+    ("users", "ix_users_is_locked", "CREATE INDEX IF NOT EXISTS ix_users_is_locked ON users (is_locked)"),
     ("users", "ix_users_primary_student_id", "CREATE INDEX IF NOT EXISTS ix_users_primary_student_id ON users (primary_student_id)"),
     ("users", "ix_users_school_id", "CREATE INDEX IF NOT EXISTS ix_users_school_id ON users (school_id)"),
     ("student_details", "ix_student_details_is_deleted", "CREATE INDEX IF NOT EXISTS ix_student_details_is_deleted ON student_details (is_deleted)"),
@@ -155,9 +167,13 @@ def default_school_config():
 
 
 def default_master_admin_config():
+    app_env = os.environ.get("APP_ENV", os.environ.get("FLASK_ENV", "development")).strip().lower()
+    default_password = os.environ.get("DEFAULT_MASTER_ADMIN_PASSWORD")
+    if not default_password and app_env not in {"production", "prod"}:
+        default_password = "masteradmin123"
     return {
         "username": (os.environ.get("DEFAULT_MASTER_ADMIN_USERNAME") or "platform-admin").strip(),
-        "password": (os.environ.get("DEFAULT_MASTER_ADMIN_PASSWORD") or "").strip(),
+        "password": (default_password or "").strip(),
         "email": (os.environ.get("DEFAULT_MASTER_ADMIN_EMAIL") or "").strip() or None,
     }
 

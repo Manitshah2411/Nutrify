@@ -71,6 +71,24 @@ def _generated_bootstrap_school_password(app, username):
     return f"Nutrify-{digest[:12]}"
 
 
+def _bootstrap_master_admin_credentials(app):
+    username = app.config.get("DEFAULT_MASTER_ADMIN_USERNAME", "platform-admin")
+    password = app.config.get("DEFAULT_MASTER_ADMIN_PASSWORD", "")
+    email = app.config.get("DEFAULT_MASTER_ADMIN_EMAIL", "") or None
+
+    if not password and not _production_mode(app):
+        password = "masteradmin123"
+
+    return username, password, email
+
+
+def _generated_bootstrap_master_admin_password(app, username):
+    secret_key = app.config.get("SECRET_KEY", "")
+    seed = f"{secret_key}:{username}:bootstrap-master"
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    return f"Nutrify-{digest[:12]}"
+
+
 def _existing_table_names():
     inspector = inspect(db.engine)
     return set(inspector.get_table_names())
@@ -178,6 +196,8 @@ def seed_database(app):
             "school_created": False,
             "foods_added": 0,
             "school_password_generated": False,
+            "master_admin_created": False,
+            "master_admin_password_generated": False,
         }
 
         school_username, school_password, school_name = _bootstrap_school_credentials(app)
@@ -198,6 +218,36 @@ def seed_database(app):
             summary["school_created"] = True
         else:
             logger.info("Bootstrap school account '%s' already exists.", school_username)
+
+        master_admin_username, master_admin_password, master_admin_email = _bootstrap_master_admin_credentials(app)
+        existing_master_admin = User.query.filter_by(username=master_admin_username).first()
+        if existing_master_admin is None:
+            if not master_admin_password:
+                master_admin_password = _generated_bootstrap_master_admin_password(app, master_admin_username)
+                summary["master_admin_password_generated"] = True
+                logger.warning(
+                    "DEFAULT_MASTER_ADMIN_PASSWORD is not set. Generated a deterministic bootstrap password for '%s' from SECRET_KEY.",
+                    master_admin_username,
+                )
+
+            logger.info("Creating the bootstrap master admin account '%s'.", master_admin_username)
+            master_admin = User(
+                username=master_admin_username,
+                email=master_admin_email,
+                full_name="Platform Administrator",
+                role=User.ROLE_MASTER_ADMIN,
+                can_manage_students=True,
+                can_manage_meals=True,
+                can_manage_attendance=True,
+                can_view_reports=True,
+                can_manage_staff=True,
+                can_approve_workflows=True,
+            )
+            master_admin.set_password(master_admin_password)
+            db.session.add(master_admin)
+            summary["master_admin_created"] = True
+        else:
+            logger.info("Bootstrap master admin account '%s' already exists.", master_admin_username)
 
         existing_food_names = {food.name for food in Food.query.with_entities(Food.name).all()}
         for food_payload in DEFAULT_FOOD_ITEMS:
@@ -231,7 +281,26 @@ def seed_database(app):
                 logger.info(
                     "You can log in with the school account: '%s' / '%s'",
                     school_username,
-                    school_password,
+                        school_password,
+                    )
+
+        if summary["master_admin_created"]:
+            if _production_mode(app):
+                if summary["master_admin_password_generated"]:
+                    logger.info(
+                        "Bootstrap master admin account created for '%s' using a fallback password derived from SECRET_KEY. Set DEFAULT_MASTER_ADMIN_PASSWORD to rotate it explicitly.",
+                        master_admin_username,
+                    )
+                else:
+                    logger.info(
+                        "Bootstrap master admin account created for '%s'. Rotate DEFAULT_MASTER_ADMIN_PASSWORD after first login.",
+                        master_admin_username,
+                    )
+            else:
+                logger.info(
+                    "You can log in with the master admin account: '%s' / '%s'",
+                    master_admin_username,
+                    master_admin_password,
                 )
 
         return summary

@@ -1169,6 +1169,12 @@ def login():
 
         user = User.query.filter_by(username=username).first()
         if user and user.check_password(password):
+            if getattr(user, 'is_deleted', False) or not getattr(user, 'is_active', True):
+                flash('Your account is not active. Please contact support.', 'danger')
+                return render_template('login.html')
+            if getattr(user, 'is_locked', False):
+                flash('Your account is locked. Please contact support.', 'danger')
+                return render_template('login.html')
             try:
                 if user.uses_legacy_password_hash:
                     user.set_password(password)
@@ -1193,6 +1199,8 @@ def login():
             establish_session(user)
             logger.info("User %s logged in successfully with role=%s", user.username, user.role)
             flash('Logged in successfully!', 'success')
+            if getattr(user, 'force_password_reset', False):
+                return redirect(url_for('platform.change_password'))
             return redirect(url_for('main.dashboard'))
         else:
             logger.info("Failed login attempt for username=%s", username)

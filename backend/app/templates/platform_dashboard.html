@@ -6,63 +6,167 @@
 {% block content %}
 <div class="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8">
     {% include "_flash_messages.html" %}
+
     <section class="surface-panel rounded-3xl p-6">
-        <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Platform Console</p>
-        <h1 class="mt-2 text-3xl font-bold text-gray-900">Master admin overview</h1>
-        <div class="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <div class="rounded-2xl bg-gray-50 p-5"><p class="text-sm text-gray-500">Schools</p><p class="mt-2 text-3xl font-bold text-gray-900">{{ school_count }}</p></div>
-            <div class="rounded-2xl bg-gray-50 p-5"><p class="text-sm text-gray-500">Staff Accounts</p><p class="mt-2 text-3xl font-bold text-gray-900">{{ staff_count }}</p></div>
-            <div class="rounded-2xl bg-gray-50 p-5"><p class="text-sm text-gray-500">Portal Users</p><p class="mt-2 text-3xl font-bold text-gray-900">{{ portal_user_count }}</p></div>
-            <div class="rounded-2xl bg-gray-50 p-5"><p class="text-sm text-gray-500">Pending Approvals</p><p class="mt-2 text-3xl font-bold text-gray-900">{{ pending_approval_count }}</p></div>
-            <div class="rounded-2xl bg-gray-50 p-5"><p class="text-sm text-gray-500">Queued Jobs</p><p class="mt-2 text-3xl font-bold text-gray-900">{{ queued_job_count }}</p></div>
-            <div class="rounded-2xl bg-gray-50 p-5"><p class="text-sm text-gray-500">Open Feedback</p><p class="mt-2 text-3xl font-bold text-gray-900">{{ open_feedback_count }}</p></div>
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+                <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">Platform Console</p>
+                <h1 class="mt-2 text-3xl font-bold text-gray-900">Master admin control plane</h1>
+                <p class="mt-3 max-w-3xl text-sm text-gray-600">Run schools, govern AI access, review audit trails, and keep risky actions observable from one place.</p>
+            </div>
+            <div class="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                <a href="{{ url_for('platform.platform_schools') }}" class="rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-900 transition hover:border-green-300 hover:bg-green-50">Schools</a>
+                <a href="{{ url_for('platform.platform_users') }}" class="rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-900 transition hover:border-green-300 hover:bg-green-50">Users</a>
+                <a href="{{ url_for('platform.platform_analytics') }}" class="rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-900 transition hover:border-green-300 hover:bg-green-50">Analytics</a>
+                <a href="{{ url_for('platform.platform_ai_controls') }}" class="rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-900 transition hover:border-green-300 hover:bg-green-50">AI Control</a>
+                <a href="{{ url_for('platform.platform_security') }}" class="rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-900 transition hover:border-green-300 hover:bg-green-50">Security</a>
+            </div>
+        </div>
+        <div class="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div class="rounded-2xl bg-gray-50 p-5">
+                <p class="text-sm text-gray-500">Schools</p>
+                <p class="mt-2 text-3xl font-bold text-gray-900">{{ summary.total_schools }}</p>
+                <p class="mt-2 text-xs text-gray-500">{{ summary.active_schools }} active / {{ summary.inactive_schools }} inactive</p>
+            </div>
+            <div class="rounded-2xl bg-gray-50 p-5">
+                <p class="text-sm text-gray-500">Users</p>
+                <p class="mt-2 text-3xl font-bold text-gray-900">{{ summary.total_users }}</p>
+                <p class="mt-2 text-xs text-gray-500">{{ summary.locked_user_count }} locked account(s)</p>
+            </div>
+            <div class="rounded-2xl bg-gray-50 p-5">
+                <p class="text-sm text-gray-500">Students</p>
+                <p class="mt-2 text-3xl font-bold text-gray-900">{{ summary.total_students }}</p>
+                <p class="mt-2 text-xs text-gray-500">Current school-linked roster</p>
+            </div>
+            <div class="rounded-2xl bg-gray-50 p-5">
+                <p class="text-sm text-gray-500">Jobs</p>
+                <p class="mt-2 text-3xl font-bold text-gray-900">{{ summary.jobs_by_status.get('queued', 0) + summary.jobs_by_status.get('running', 0) }}</p>
+                <p class="mt-2 text-xs text-gray-500">{{ summary.jobs_by_status.get('failed', 0) }} failed / {{ summary.jobs_by_status.get('completed', 0) }} completed</p>
+            </div>
         </div>
     </section>
 
-    <section class="grid gap-8 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-        <div class="surface-panel rounded-3xl p-6">
-            <h2 class="text-2xl font-bold text-gray-900">Schools</h2>
-            <div class="mt-6 overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">School</th>
-                            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Students</th>
-                            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Staff</th>
-                            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Approvals</th>
-                            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Feedback</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-gray-200">
-                        {% for row in school_rows %}
+    <section class="grid gap-8 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+        <div class="space-y-8">
+            <section class="surface-panel rounded-3xl p-6">
+                <div class="flex items-center justify-between gap-4">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-900">School footprint</h2>
+                        <p class="mt-2 text-sm text-gray-600">A compact view of current school size, activity, and AI usage.</p>
+                    </div>
+                    <a href="{{ url_for('platform.platform_schools') }}" class="inline-flex rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-black">Open Schools</a>
+                </div>
+                <div class="mt-6 overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
                             <tr>
-                                <td class="px-4 py-4 text-sm font-semibold text-gray-900">{{ row.school.school_name or row.school.username }}</td>
-                                <td class="px-4 py-4 text-sm text-gray-600">{{ row.students }}</td>
-                                <td class="px-4 py-4 text-sm text-gray-600">{{ row.staff }}</td>
-                                <td class="px-4 py-4 text-sm text-gray-600">{{ row.pending_approvals }}</td>
-                                <td class="px-4 py-4 text-sm text-gray-600">{{ row.open_feedback }}</td>
+                                <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">School</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Students</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Staff</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">AI Units</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Last Activity</th>
                             </tr>
-                        {% else %}
-                            <tr><td colspan="5" class="px-4 py-8 text-center text-sm text-gray-500">No schools found.</td></tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200">
+                            {% for school, student_count, staff_count, ai_units, last_activity_at in school_page.items %}
+                                <tr>
+                                    <td class="px-4 py-4 text-sm font-semibold text-gray-900">
+                                        <a href="{{ url_for('platform.platform_school_detail', school_id=school.id) }}" class="hover:text-green-700">{{ school.school_name or school.username }}</a>
+                                        <p class="mt-1 text-xs text-gray-500">{{ school.username }}</p>
+                                    </td>
+                                    <td class="px-4 py-4 text-sm text-gray-600">{{ student_count }}</td>
+                                    <td class="px-4 py-4 text-sm text-gray-600">{{ staff_count }}</td>
+                                    <td class="px-4 py-4 text-sm text-gray-600">{{ ai_units }}</td>
+                                    <td class="px-4 py-4 text-sm text-gray-600">{{ last_activity_at.strftime('%d %b %Y %H:%M') if last_activity_at else 'No activity yet' }}</td>
+                                </tr>
+                            {% else %}
+                                <tr><td colspan="5" class="px-4 py-8 text-center text-sm text-gray-500">No schools found.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="surface-panel rounded-3xl p-6">
+                <div class="flex items-center justify-between gap-4">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-900">Recent activity</h2>
+                        <p class="mt-2 text-sm text-gray-600">Audit events across the platform.</p>
+                    </div>
+                    <a href="{{ url_for('platform.activity_logs') }}" class="inline-flex rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:border-green-300 hover:text-green-700">Open Audit Logs</a>
+                </div>
+                <div class="mt-6 space-y-3">
+                    {% for log in summary.recent_audit_logs %}
+                        <div class="rounded-2xl border border-gray-200 bg-white p-4">
+                            <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                                <div>
+                                    <p class="text-sm font-semibold text-gray-900">{{ log.action|replace('_', ' ')|title }}</p>
+                                    <p class="mt-1 text-sm text-gray-600">{{ log.entity_type }}{% if log.entity_id %} #{{ log.entity_id }}{% endif %}</p>
+                                </div>
+                                <div class="text-xs text-gray-500">
+                                    {{ log.created_at.strftime('%d %b %Y %H:%M') if log.created_at else '' }}
+                                </div>
+                            </div>
+                        </div>
+                    {% else %}
+                        <p class="text-sm text-gray-500">No audit activity yet.</p>
+                    {% endfor %}
+                </div>
+            </section>
         </div>
 
-        <div class="surface-panel rounded-3xl p-6">
-            <h2 class="text-2xl font-bold text-gray-900">Recent Activity</h2>
-            <div class="mt-6 space-y-4">
-                {% for log in recent_audit_logs %}
-                    <div class="rounded-2xl border border-gray-200 p-4">
-                        <p class="text-sm font-semibold text-gray-900">{{ log.action|replace('_', ' ')|title }}</p>
-                        <p class="mt-1 text-sm text-gray-600">{{ log.entity_type }}{% if log.entity_id %} #{{ log.entity_id }}{% endif %}</p>
-                        <p class="mt-2 text-xs text-gray-500">{{ log.created_at.strftime('%d %b %Y %H:%M') if log.created_at else '' }}</p>
-                    </div>
-                {% else %}
-                    <p class="text-sm text-gray-500">No audit activity yet.</p>
-                {% endfor %}
-            </div>
+        <div class="space-y-8">
+            <section class="surface-panel rounded-3xl p-6">
+                <h2 class="text-2xl font-bold text-gray-900">System alerts</h2>
+                <div class="mt-6 space-y-3">
+                    {% for alert in summary.system_alerts %}
+                        <div class="rounded-2xl border border-red-200 bg-red-50 p-4">
+                            <p class="text-sm font-semibold text-red-900">
+                                {% if alert.job_type is defined %}Failed job: {{ alert.job_type|replace('_', ' ')|title }}{% else %}Failed audit: {{ alert.action|replace('_', ' ')|title }}{% endif %}
+                            </p>
+                            <p class="mt-1 text-sm text-red-700">
+                                {% if alert.error_message is defined %}{{ alert.error_message or 'No error details recorded.' }}{% else %}{{ alert.entity_type }}{% if alert.entity_id %} #{{ alert.entity_id }}{% endif %}{% endif %}
+                            </p>
+                        </div>
+                    {% else %}
+                        <p class="text-sm text-gray-500">No active platform alerts.</p>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="surface-panel rounded-3xl p-6">
+                <h2 class="text-2xl font-bold text-gray-900">AI governance snapshot</h2>
+                <div class="mt-6 space-y-4">
+                    {% for feature, limit in global_ai_limits.items() %}
+                        <div class="rounded-2xl bg-gray-50 p-4">
+                            <div class="flex items-center justify-between gap-4">
+                                <div>
+                                    <p class="text-sm font-semibold text-gray-900">{{ feature|replace('_', ' ')|title }}</p>
+                                    <p class="mt-1 text-xs text-gray-500">Daily limit {{ limit }}</p>
+                                </div>
+                                <div class="text-right">
+                                    <p class="text-sm font-semibold text-gray-900">{{ summary.ai_daily.get(feature, {}).get('requests', 0) }} today</p>
+                                    <p class="mt-1 text-xs text-gray-500">{{ summary.ai_total.get(feature, {}).get('units', 0) }} total units</p>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="surface-panel rounded-3xl p-6">
+                <h2 class="text-2xl font-bold text-gray-900">Job status</h2>
+                <div class="mt-6 grid gap-3 sm:grid-cols-2">
+                    {% for status, count in summary.jobs_by_status.items() %}
+                        <div class="rounded-2xl bg-gray-50 p-4">
+                            <p class="text-sm text-gray-500">{{ status|title }}</p>
+                            <p class="mt-2 text-2xl font-bold text-gray-900">{{ count }}</p>
+                        </div>
+                    {% else %}
+                        <p class="text-sm text-gray-500">No jobs recorded yet.</p>
+                    {% endfor %}
+                </div>
+            </section>
         </div>
     </section>
 </div>

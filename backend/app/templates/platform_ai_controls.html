@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+
+{% block title %}AI Controls - Nutrify{% endblock %}
+{% block nav_ai %}bg-green-50 text-green-700 shadow-sm ring-1 ring-green-100 transition-colors{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+    {% include "_flash_messages.html" %}
+
+    <section class="grid gap-8 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.9fr)]">
+        <section class="surface-panel rounded-3xl p-6">
+            <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">AI Governance</p>
+            <h1 class="mt-2 text-3xl font-bold text-gray-900">Usage limits and access policies</h1>
+            <form method="POST" class="mt-6 grid gap-4 md:grid-cols-2">
+                <input type="hidden" name="form_type" value="global-limits">
+                {% for feature, value in global_limits.items() %}
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700">{{ feature|replace('_', ' ')|title }}</label>
+                        <input type="number" min="1" name="limit_{{ feature }}" value="{{ value }}" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                    </div>
+                {% endfor %}
+                <div class="md:col-span-2 flex justify-end">
+                    <button type="submit" class="inline-flex rounded-xl bg-green-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700">Save Global Limits</button>
+                </div>
+            </form>
+        </section>
+
+        <section class="surface-panel rounded-3xl p-6">
+            <h2 class="text-2xl font-bold text-gray-900">Create override</h2>
+            <form method="POST" class="mt-6 space-y-4">
+                <input type="hidden" name="form_type" value="policy">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700">Scope</label>
+                    <select name="scope_type" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                        <option value="global">Global</option>
+                        <option value="school">School</option>
+                        <option value="user">User</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700">School</label>
+                    <select name="school_id" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                        <option value="">No school</option>
+                        {% for school in schools %}
+                            <option value="{{ school.id }}">{{ school.school_name or school.username }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700">User</label>
+                    <select name="user_id" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                        <option value="">No user</option>
+                        {% for user in users %}
+                            <option value="{{ user.id }}">{{ user.username }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700">Feature</label>
+                    <select name="feature" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                        {% for feature in features %}
+                            <option value="{{ feature }}">{{ 'All features' if feature == '*' else feature|replace('_', ' ')|title }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700">Daily limit</label>
+                    <input type="number" min="1" name="daily_limit" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                </div>
+                <label class="flex items-center gap-3 text-sm text-gray-700">
+                    <input type="checkbox" name="is_enabled" value="1" checked class="rounded border-gray-300 text-green-600 focus:ring-green-500">
+                    Enable access for this scope
+                </label>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700">Notes</label>
+                    <textarea name="notes" rows="3" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500"></textarea>
+                </div>
+                <button type="submit" class="inline-flex rounded-xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-black">Save Override</button>
+            </form>
+        </section>
+    </section>
+
+    <section class="grid gap-8 xl:grid-cols-2">
+        <section class="surface-panel rounded-3xl p-6">
+            <h2 class="text-2xl font-bold text-gray-900">Top school usage</h2>
+            <div class="mt-6 space-y-3">
+                {% for row in usage_by_school %}
+                    <div class="rounded-2xl bg-gray-50 p-4">
+                        <p class="text-sm font-semibold text-gray-900">{{ row.school_name }}</p>
+                        <p class="mt-2 text-sm text-gray-600">{{ row.requests }} request(s) · {{ row.units }} unit(s)</p>
+                    </div>
+                {% else %}
+                    <p class="text-sm text-gray-500">No school AI usage recorded yet.</p>
+                {% endfor %}
+            </div>
+        </section>
+
+        <section class="surface-panel rounded-3xl p-6">
+            <h2 class="text-2xl font-bold text-gray-900">Top user usage</h2>
+            <div class="mt-6 space-y-3">
+                {% for row in usage_by_user %}
+                    <div class="rounded-2xl bg-gray-50 p-4">
+                        <p class="text-sm font-semibold text-gray-900">{{ row.full_name or row.username }}</p>
+                        <p class="mt-2 text-sm text-gray-600">{{ row.requests }} request(s) · {{ row.units }} unit(s)</p>
+                    </div>
+                {% else %}
+                    <p class="text-sm text-gray-500">No user AI usage recorded yet.</p>
+                {% endfor %}
+            </div>
+        </section>
+    </section>
+
+    <section class="surface-panel rounded-3xl p-6">
+        <h2 class="text-2xl font-bold text-gray-900">Policy history</h2>
+        <div class="mt-6 overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Feature</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Scope</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Limit</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Enabled</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Notes</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200">
+                    {% for policy in policies %}
+                        <tr>
+                            <td class="px-4 py-4 text-sm text-gray-700">{{ policy.feature }}</td>
+                            <td class="px-4 py-4 text-sm text-gray-600">
+                                {% if policy.user %}User: {{ policy.user.username }}
+                                {% elif policy.school %}School: {{ policy.school.school_name or policy.school.username }}
+                                {% else %}Global{% endif %}
+                            </td>
+                            <td class="px-4 py-4 text-sm text-gray-600">{{ policy.daily_limit or 'Default' }}</td>
+                            <td class="px-4 py-4 text-sm text-gray-600">{{ 'Yes' if policy.is_enabled else 'No' }}</td>
+                            <td class="px-4 py-4 text-sm text-gray-600">{{ policy.notes or '—' }}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="5" class="px-4 py-8 text-center text-sm text-gray-500">No policy overrides saved yet.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+{% endblock %}

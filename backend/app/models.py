@@ -62,6 +62,11 @@ class User(db.Model, UserMixin, SoftDeleteMixin, TimestampMixin):
     password_hash = db.Column(db.String(256), nullable=False)
     role = db.Column(db.String(20), nullable=False, index=True)
     school_name = db.Column(db.String(120), nullable=True, index=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    is_locked = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    locked_at = db.Column(db.DateTime, nullable=True)
+    force_password_reset = db.Column(db.Boolean, default=False, nullable=False)
+    ai_access_enabled = db.Column(db.Boolean, default=True, nullable=False)
     last_login_at = db.Column(db.DateTime, nullable=True)
     last_password_change_at = db.Column(db.DateTime, nullable=True)
     session_version = db.Column(db.Integer, default=1, nullable=False)
@@ -123,7 +128,31 @@ class User(db.Model, UserMixin, SoftDeleteMixin, TimestampMixin):
     def set_password(self, password):
         self.password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
         self.last_password_change_at = utcnow()
+        self.force_password_reset = False
+        self.is_locked = False
+        self.locked_at = None
         self.session_version = (self.session_version or 0) + 1
+
+    def invalidate_sessions(self):
+        self.session_version = (self.session_version or 0) + 1
+
+    def lock_account(self):
+        self.is_locked = True
+        self.locked_at = utcnow()
+        self.invalidate_sessions()
+
+    def unlock_account(self):
+        self.is_locked = False
+        self.locked_at = None
+        self.invalidate_sessions()
+
+    def activate_account(self):
+        self.is_active = True
+        self.invalidate_sessions()
+
+    def deactivate_account(self):
+        self.is_active = False
+        self.invalidate_sessions()
 
     @property
     def uses_legacy_password_hash(self):
@@ -226,6 +255,10 @@ class User(db.Model, UserMixin, SoftDeleteMixin, TimestampMixin):
         return self.has_role(self.ROLE_MASTER_ADMIN) or self.is_school_root or (
             self.has_role(self.ROLE_SCHOOL_ADMIN) and self.can_approve_workflows
         )
+
+    @property
+    def is_accessible(self):
+        return bool(self.is_active and not self.is_locked and not self.is_deleted)
 
 
 class StudentDetail(db.Model, SoftDeleteMixin, TimestampMixin):
@@ -537,6 +570,39 @@ class UserFeedback(db.Model, TimestampMixin):
 
     school = db.relationship('User', foreign_keys=[school_id], backref=db.backref('school_feedback_entries', lazy='dynamic'))
     user = db.relationship('User', foreign_keys=[user_id], backref=db.backref('submitted_feedback_entries', lazy='dynamic'))
+
+
+class PlatformSetting(db.Model, TimestampMixin):
+    __tablename__ = 'platform_settings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(120), unique=True, nullable=False, index=True)
+    value = db.Column(db.JSON, nullable=True)
+    description = db.Column(db.String(255), nullable=True)
+    updated_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+
+    updated_by_user = db.relationship('User', foreign_keys=[updated_by_user_id], backref=db.backref('updated_platform_settings', lazy='dynamic'))
+
+
+class AIAccessPolicy(db.Model, TimestampMixin):
+    __tablename__ = 'ai_access_policies'
+
+    id = db.Column(db.Integer, primary_key=True)
+    school_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    feature = db.Column(db.String(64), nullable=False, index=True)
+    daily_limit = db.Column(db.Integer, nullable=True)
+    is_enabled = db.Column(db.Boolean, default=True, nullable=False)
+    notes = db.Column(db.Text, nullable=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+
+    school = db.relationship('User', foreign_keys=[school_id], backref=db.backref('school_ai_policies', lazy='dynamic'))
+    user = db.relationship('User', foreign_keys=[user_id], backref=db.backref('user_ai_policies', lazy='dynamic'))
+    creator = db.relationship('User', foreign_keys=[created_by_user_id], backref=db.backref('created_ai_policies', lazy='dynamic'))
+
+    __table_args__ = (
+        db.Index('ix_ai_access_policy_scope_feature', 'school_id', 'user_id', 'feature'),
+    )
 
 
 SOFT_DELETE_MODELS = ()

@@ -80,6 +80,11 @@
                             <a href="{{ url_for('platform.approvals_dashboard') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_approvals %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Approvals</a>
                         {% elif current_user.normalized_role == 'master_admin' %}
                             <a href="{{ url_for('platform.platform_dashboard') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_platform %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Platform</a>
+                            <a href="{{ url_for('platform.platform_schools') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_schools %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Schools</a>
+                            <a href="{{ url_for('platform.platform_users') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_users %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Users</a>
+                            <a href="{{ url_for('platform.platform_analytics') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_analytics %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Analytics</a>
+                            <a href="{{ url_for('platform.platform_ai_controls') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_ai %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">AI</a>
+                            <a href="{{ url_for('platform.platform_security') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_security %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Security</a>
                             <a href="{{ url_for('platform.activity_logs') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_activity %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Activity</a>
                             <a href="{{ url_for('platform.jobs_dashboard') }}" class="px-3 py-2 rounded-md text-sm font-medium {% block nav_jobs %}text-gray-700 hover:bg-gray-100 transition-colors{% endblock %}">Jobs</a>
                         {% elif current_user.normalized_role == 'user' %}

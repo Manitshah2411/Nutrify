@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+
+{% block title %}User Detail - Nutrify{% endblock %}
+{% block nav_users %}bg-green-50 text-green-700 shadow-sm ring-1 ring-green-100 transition-colors{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+    {% include "_flash_messages.html" %}
+
+    <section class="surface-panel rounded-3xl p-6">
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+                <p class="text-sm font-semibold uppercase tracking-[0.14em] text-green-700">User Detail</p>
+                <h1 class="mt-2 text-3xl font-bold text-gray-900">{{ target_user.display_name }}</h1>
+                <p class="mt-2 text-sm text-gray-600">{{ target_user.username }}{% if target_user.email %} · {{ target_user.email }}{% endif %}</p>
+            </div>
+            <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div class="rounded-2xl bg-gray-50 p-4">
+                    <p class="text-xs uppercase tracking-[0.08em] text-gray-500">Role</p>
+                    <p class="mt-2 text-sm font-semibold text-gray-900">{{ target_user.normalized_role|replace('_', ' ')|title }}</p>
+                </div>
+                <div class="rounded-2xl bg-gray-50 p-4">
+                    <p class="text-xs uppercase tracking-[0.08em] text-gray-500">State</p>
+                    <p class="mt-2 text-sm font-semibold text-gray-900">
+                        {% if target_user.is_deleted %}Archived{% elif target_user.is_locked %}Locked{% elif not target_user.is_active %}Inactive{% else %}Active{% endif %}
+                    </p>
+                </div>
+                <div class="rounded-2xl bg-gray-50 p-4">
+                    <p class="text-xs uppercase tracking-[0.08em] text-gray-500">AI Access</p>
+                    <p class="mt-2 text-sm font-semibold text-gray-900">{{ 'Enabled' if target_user.ai_access_enabled else 'Disabled' }}</p>
+                </div>
+                <div class="rounded-2xl bg-gray-50 p-4">
+                    <p class="text-xs uppercase tracking-[0.08em] text-gray-500">Sessions</p>
+                    <p class="mt-2 text-sm font-semibold text-gray-900">v{{ target_user.session_version }}</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="grid gap-8 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.85fr)]">
+        <div class="space-y-8">
+            <section class="surface-panel rounded-3xl p-6">
+                <h2 class="text-2xl font-bold text-gray-900">Profile and permissions</h2>
+                <form action="{{ url_for('platform.update_platform_user', user_id=target_user.id) }}" method="POST" class="mt-6 grid gap-4 md:grid-cols-2">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700">Username</label>
+                        <input name="username" value="{{ target_user.username }}" required class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700">Full Name</label>
+                        <input name="full_name" value="{{ target_user.full_name or '' }}" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700">Email</label>
+                        <input name="email" type="email" value="{{ target_user.email or '' }}" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700">Role</label>
+                        <select name="role" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                            <option value="master_admin" {% if target_user.normalized_role == 'master_admin' %}selected{% endif %}>Master Admin</option>
+                            <option value="school_admin" {% if target_user.normalized_role == 'school_admin' %}selected{% endif %}>School Admin</option>
+                            <option value="user" {% if target_user.normalized_role == 'user' %}selected{% endif %}>User</option>
+                        </select>
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-sm font-semibold text-gray-700">School</label>
+                        <select name="school_id" class="mt-2 block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                            <option value="">No school</option>
+                            {% for school in schools %}
+                                <option value="{{ school.id }}" {% if target_user.school_id == school.id %}selected{% endif %}>{{ school.school_name or school.username }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="md:col-span-2 grid gap-2 sm:grid-cols-2 text-sm text-gray-700">
+                        <label class="flex items-center gap-2"><input type="checkbox" name="can_manage_students" value="1" {% if target_user.can_manage_students %}checked{% endif %} class="rounded border-gray-300 text-green-600 focus:ring-green-500">Manage students</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" name="can_manage_meals" value="1" {% if target_user.can_manage_meals %}checked{% endif %} class="rounded border-gray-300 text-green-600 focus:ring-green-500">Manage meals</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" name="can_manage_attendance" value="1" {% if target_user.can_manage_attendance %}checked{% endif %} class="rounded border-gray-300 text-green-600 focus:ring-green-500">Manage attendance</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" name="can_view_reports" value="1" {% if target_user.can_view_reports %}checked{% endif %} class="rounded border-gray-300 text-green-600 focus:ring-green-500">View reports</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" name="can_manage_staff" value="1" {% if target_user.can_manage_staff %}checked{% endif %} class="rounded border-gray-300 text-green-600 focus:ring-green-500">Manage staff</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" name="can_approve_workflows" value="1" {% if target_user.can_approve_workflows %}checked{% endif %} class="rounded border-gray-300 text-green-600 focus:ring-green-500">Approve workflows</label>
+                    </div>
+                    <div class="md:col-span-2 flex justify-end">
+                        <button type="submit" class="inline-flex rounded-xl bg-green-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700">Save User</button>
+                    </div>
+                </form>
+            </section>
+
+            <section class="surface-panel rounded-3xl p-6">
+                <h2 class="text-2xl font-bold text-gray-900">Recent audit activity</h2>
+                <div class="mt-6 space-y-3">
+                    {% for log in user_logs %}
+                        <div class="rounded-2xl border border-gray-200 bg-white p-4">
+                            <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                                <div>
+                                    <p class="text-sm font-semibold text-gray-900">{{ log.action|replace('_', ' ')|title }}</p>
+                                    <p class="mt-1 text-sm text-gray-600">{{ log.entity_type }}{% if log.entity_id %} #{{ log.entity_id }}{% endif %}</p>
+                                </div>
+                                <div class="text-xs text-gray-500">{{ log.created_at.strftime('%d %b %Y %H:%M') if log.created_at else '' }}</div>
+                            </div>
+                        </div>
+                    {% else %}
+                        <p class="text-sm text-gray-500">No recent activity for this user.</p>
+                    {% endfor %}
+                </div>
+            </section>
+        </div>
+
+        <div class="space-y-8">
+            <section class="surface-panel rounded-3xl p-6 space-y-6">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-900">Security controls</h2>
+                    <p class="mt-2 text-sm text-gray-600">Type <span class="font-semibold text-gray-900">{{ target_user.username }}</span> to confirm risky actions.</p>
+                </div>
+
+                <form action="{{ url_for('platform.reset_platform_user_password', user_id=target_user.id) }}" method="POST" class="space-y-3 rounded-2xl border border-gray-200 p-4">
+                    <label class="block text-sm font-semibold text-gray-700">Reset password</label>
+                    <input name="new_password" type="text" placeholder="Leave blank to generate a temporary password" class="block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                    <input name="confirm_value" placeholder="{{ target_user.username }}" class="block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                    <button type="submit" class="inline-flex rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-black">Reset Password</button>
+                </form>
+
+                {% for action, label, style in [
+                    ('activate', 'Activate Account', 'bg-green-600 hover:bg-green-700'),
+                    ('deactivate', 'Deactivate Account', 'bg-amber-500 hover:bg-amber-600'),
+                    ('lock', 'Lock Account', 'bg-red-600 hover:bg-red-700'),
+                    ('unlock', 'Unlock Account', 'bg-green-600 hover:bg-green-700'),
+                    ('force-reset', 'Force Password Reset', 'bg-gray-900 hover:bg-black'),
+                    ('clear-force-reset', 'Clear Password Reset Flag', 'bg-gray-900 hover:bg-black'),
+                    ('invalidate-sessions', 'Invalidate Sessions', 'bg-gray-900 hover:bg-black'),
+                    ('disable-ai', 'Disable AI Access', 'bg-red-600 hover:bg-red-700'),
+                    ('enable-ai', 'Enable AI Access', 'bg-green-600 hover:bg-green-700'),
+                    ('delete', 'Archive User', 'bg-red-600 hover:bg-red-700'),
+                    ('restore', 'Restore User', 'bg-green-600 hover:bg-green-700'),
+                ] %}
+                    <form action="{{ url_for('platform.platform_user_action', user_id=target_user.id, action=action) }}" method="POST" class="space-y-3 rounded-2xl border border-gray-200 p-4">
+                        {% if action in ['deactivate', 'lock', 'delete', 'force-reset', 'invalidate-sessions', 'disable-ai'] %}
+                            <input name="confirm_value" placeholder="{{ target_user.username }}" class="block w-full rounded-xl border border-gray-300 px-4 py-3 shadow-sm focus:border-green-500 focus:ring-green-500">
+                        {% endif %}
+                        <button type="submit" class="inline-flex rounded-xl {{ style }} px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition">{{ label }}</button>
+                    </form>
+                {% endfor %}
+            </section>
+
+            <section class="surface-panel rounded-3xl p-6">
+                <h2 class="text-2xl font-bold text-gray-900">Notifications</h2>
+                <div class="mt-6 space-y-3">
+                    {% for notification in notifications %}
+                        <div class="rounded-2xl border {{ 'border-gray-200 bg-white' if notification.is_read else 'border-green-200 bg-green-50/60' }} p-4">
+                            <p class="text-sm font-semibold text-gray-900">{{ notification.title }}</p>
+                            <p class="mt-1 text-sm text-gray-600">{{ notification.message }}</p>
+                        </div>
+                    {% else %}
+                        <p class="text-sm text-gray-500">No recent notifications for this user.</p>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="surface-panel rounded-3xl p-6">
+                <h2 class="text-2xl font-bold text-gray-900">Recent AI usage</h2>
+                <div class="mt-6 space-y-3">
+                    {% for entry in ai_usage %}
+                        <div class="rounded-2xl bg-gray-50 p-4">
+                            <p class="text-sm font-semibold text-gray-900">{{ entry.feature|replace('_', ' ')|title }}</p>
+                            <p class="mt-1 text-sm text-gray-600">{{ entry.status|title }} · {{ entry.request_units }} unit(s)</p>
+                        </div>
+                    {% else %}
+                        <p class="text-sm text-gray-500">No AI usage logged for this user.</p>
+                    {% endfor %}
+                </div>
+            </section>
+        </div>
+    </section>
+</div>
+{% endblock %}

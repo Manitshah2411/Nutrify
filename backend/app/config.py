@@ -66,6 +66,15 @@ def _default_school_password():
     return "school123"
 
 
+def _default_master_admin_password():
+    password = os.environ.get("DEFAULT_MASTER_ADMIN_PASSWORD")
+    if password:
+        return password
+    if _is_production():
+        return ""
+    return "masteradmin123"
+
+
 def sqlalchemy_engine_options(database_uri=None):
     uri = database_uri or _database_uri()
     options = {
@@ -120,7 +129,7 @@ class BaseConfig:
     AI_DAILY_LIMIT_MEAL_GENERATOR = _env_int("AI_DAILY_LIMIT_MEAL_GENERATOR", 30)
     AI_DAILY_LIMIT_HEALTH_INSIGHTS = _env_int("AI_DAILY_LIMIT_HEALTH_INSIGHTS", 30)
     DEFAULT_MASTER_ADMIN_USERNAME = os.environ.get("DEFAULT_MASTER_ADMIN_USERNAME", "platform-admin")
-    DEFAULT_MASTER_ADMIN_PASSWORD = os.environ.get("DEFAULT_MASTER_ADMIN_PASSWORD", "")
+    DEFAULT_MASTER_ADMIN_PASSWORD = _default_master_admin_password()
     DEFAULT_MASTER_ADMIN_EMAIL = os.environ.get("DEFAULT_MASTER_ADMIN_EMAIL", "")
     ERROR_TRACKING_DSN = os.environ.get("ERROR_TRACKING_DSN", "")
 
