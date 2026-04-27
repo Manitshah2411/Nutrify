@@ -125,6 +125,44 @@ def test_seed_database_does_not_require_password_when_bootstrap_school_exists():
     assert user.check_password("existing-pass")
 
 
+def test_seed_database_resets_existing_master_admin_password_in_production():
+    class ProductionMissingMasterAdminPasswordConfig:
+        APP_ENV = "production"
+        TESTING = True
+        SECRET_KEY = "prod-secret"
+        SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+        SQLALCHEMY_TRACK_MODIFICATIONS = False
+        WTF_CSRF_ENABLED = False
+        RATELIMIT_ENABLED = False
+        DEFAULT_SCHOOL_USERNAME = "BestSchool"
+        DEFAULT_SCHOOL_NAME = "The Best School"
+        DEFAULT_SCHOOL_PASSWORD = "generated-password"
+        DEFAULT_MASTER_ADMIN_USERNAME = "platform-admin"
+        DEFAULT_MASTER_ADMIN_PASSWORD = ""
+
+    app = create_app(ProductionMissingMasterAdminPasswordConfig)
+    with app.app_context():
+        db.create_all()
+        existing_admin = User(
+            username="platform-admin",
+            role=User.ROLE_MASTER_ADMIN,
+            is_active=False,
+            is_locked=True,
+        )
+        existing_admin.set_password("wrong-password")
+        db.session.add(existing_admin)
+        db.session.commit()
+
+        summary = seed_database(app)
+        refreshed = User.query.filter_by(username="platform-admin").one()
+
+    assert summary["master_admin_created"] is False
+    assert summary["master_admin_password_reset"] is True
+    assert refreshed.check_password("masteradmin123")
+    assert refreshed.is_active is True
+    assert refreshed.is_locked is False
+
+
 def test_create_app_rejects_invalid_runtime_configuration():
     with pytest.raises(RuntimeError):
         create_app(InvalidRuntimeConfig)

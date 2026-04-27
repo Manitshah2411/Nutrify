@@ -76,7 +76,7 @@ def _bootstrap_master_admin_credentials(app):
     password = app.config.get("DEFAULT_MASTER_ADMIN_PASSWORD", "")
     email = app.config.get("DEFAULT_MASTER_ADMIN_EMAIL", "") or None
 
-    if not password and not _production_mode(app):
+    if not password:
         password = "masteradmin123"
 
     return username, password, email
@@ -197,7 +197,7 @@ def seed_database(app):
             "foods_added": 0,
             "school_password_generated": False,
             "master_admin_created": False,
-            "master_admin_password_generated": False,
+            "master_admin_password_reset": False,
         }
 
         school_username, school_password, school_name = _bootstrap_school_credentials(app)
@@ -222,14 +222,6 @@ def seed_database(app):
         master_admin_username, master_admin_password, master_admin_email = _bootstrap_master_admin_credentials(app)
         existing_master_admin = User.query.filter_by(username=master_admin_username).first()
         if existing_master_admin is None:
-            if not master_admin_password:
-                master_admin_password = _generated_bootstrap_master_admin_password(app, master_admin_username)
-                summary["master_admin_password_generated"] = True
-                logger.warning(
-                    "DEFAULT_MASTER_ADMIN_PASSWORD is not set. Generated a deterministic bootstrap password for '%s' from SECRET_KEY.",
-                    master_admin_username,
-                )
-
             logger.info("Creating the bootstrap master admin account '%s'.", master_admin_username)
             master_admin = User(
                 username=master_admin_username,
@@ -247,7 +239,26 @@ def seed_database(app):
             db.session.add(master_admin)
             summary["master_admin_created"] = True
         else:
-            logger.info("Bootstrap master admin account '%s' already exists.", master_admin_username)
+            logger.info("Bootstrap master admin account '%s' already exists. Reconciling access state.", master_admin_username)
+            if existing_master_admin.email is None and master_admin_email:
+                existing_master_admin.email = master_admin_email
+            if not existing_master_admin.full_name:
+                existing_master_admin.full_name = "Platform Administrator"
+            existing_master_admin.role = User.ROLE_MASTER_ADMIN
+            existing_master_admin.can_manage_students = True
+            existing_master_admin.can_manage_meals = True
+            existing_master_admin.can_manage_attendance = True
+            existing_master_admin.can_view_reports = True
+            existing_master_admin.can_manage_staff = True
+            existing_master_admin.can_approve_workflows = True
+            if getattr(existing_master_admin, "is_deleted", False):
+                existing_master_admin.is_deleted = False
+                existing_master_admin.deleted_at = None
+            existing_master_admin.activate_account()
+            existing_master_admin.unlock_account()
+            if not existing_master_admin.check_password(master_admin_password):
+                existing_master_admin.set_password(master_admin_password)
+                summary["master_admin_password_reset"] = True
 
         existing_food_names = {food.name for food in Food.query.with_entities(Food.name).all()}
         for food_payload in DEFAULT_FOOD_ITEMS:
@@ -286,22 +297,21 @@ def seed_database(app):
 
         if summary["master_admin_created"]:
             if _production_mode(app):
-                if summary["master_admin_password_generated"]:
-                    logger.info(
-                        "Bootstrap master admin account created for '%s' using a fallback password derived from SECRET_KEY. Set DEFAULT_MASTER_ADMIN_PASSWORD to rotate it explicitly.",
-                        master_admin_username,
-                    )
-                else:
-                    logger.info(
-                        "Bootstrap master admin account created for '%s'. Rotate DEFAULT_MASTER_ADMIN_PASSWORD after first login.",
-                        master_admin_username,
-                    )
+                logger.info(
+                    "Bootstrap master admin account created for '%s'. Rotate DEFAULT_MASTER_ADMIN_PASSWORD after first login.",
+                    master_admin_username,
+                )
             else:
                 logger.info(
                     "You can log in with the master admin account: '%s' / '%s'",
                     master_admin_username,
                     master_admin_password,
                 )
+        elif summary["master_admin_password_reset"]:
+            logger.warning(
+                "Bootstrap master admin account '%s' password was reset during deploy reconciliation.",
+                master_admin_username,
+            )
 
         return summary
 
