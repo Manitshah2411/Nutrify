@@ -5,6 +5,7 @@ from sqlalchemy.exc import ProgrammingError
 import app as app_module
 from app import create_app
 from app.bootstrap import CURRENT_SCHEMA_REVISION, bootstrap_database
+from app.config import _normalize_database_url
 from app.models import Food, User, db
 from manage import (
     ENTERPRISE_FOUNDATION_REVISION,
@@ -161,6 +162,24 @@ def test_seed_database_resets_existing_master_admin_password_in_production():
     assert refreshed.check_password("masteradmin123")
     assert refreshed.is_active is True
     assert refreshed.is_locked is False
+
+
+def test_normalize_database_url_rewrites_supabase_pooler_connection():
+    database_url = (
+        "postgresql://postgres.sjihztiqsookmakbxrk:secret-pass"
+        "@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres"
+    )
+
+    normalized = _normalize_database_url(database_url)
+
+    assert normalized.startswith("postgresql://postgres:secret-pass@db.sjihztiqsookmakbxrk.supabase.co:5432/postgres")
+    assert "sslmode=require" in normalized
+
+
+def test_normalize_database_url_leaves_non_supabase_urls_unchanged():
+    database_url = "postgresql://nutrify:secret-pass@db.example.com:5432/nutrify"
+
+    assert _normalize_database_url(database_url) == database_url
 
 
 def test_create_app_rejects_invalid_runtime_configuration():

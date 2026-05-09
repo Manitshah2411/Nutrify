@@ -4,6 +4,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
+from sqlalchemy.engine import make_url
 
 basedir = Path(__file__).resolve().parent.parent
 load_dotenv(basedir / ".env", override=False)
@@ -31,10 +32,42 @@ def _env_bool(name, default=False):
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _normalize_database_url(database_url):
+    if not database_url:
+        return database_url
+
+    normalized = database_url.replace("postgres://", "postgresql://", 1)
+    try:
+        url = make_url(normalized)
+    except Exception:
+        return normalized
+
+    host = (url.host or "").strip().lower()
+    username = (url.username or "").strip()
+    if not host.endswith(".pooler.supabase.com"):
+        return normalized
+    if not username.startswith("postgres."):
+        return normalized
+
+    project_ref = username.split(".", 1)[1].strip()
+    if not project_ref:
+        return normalized
+
+    query = dict(url.query)
+    query.setdefault("sslmode", "require")
+    direct_url = url.set(
+        host=f"db.{project_ref}.supabase.co",
+        port=5432,
+        username="postgres",
+        query=query,
+    )
+    return direct_url.render_as_string(hide_password=False)
+
+
 def _database_uri():
     database_url = os.environ.get("DATABASE_URL")
     if database_url:
-        return database_url.replace("postgres://", "postgresql://", 1)
+        return _normalize_database_url(database_url)
     if _is_production():
         raise RuntimeError("DATABASE_URL is required in production.")
     return f"sqlite:///{basedir / 'database.db'}"
