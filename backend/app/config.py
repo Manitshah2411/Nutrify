@@ -49,19 +49,13 @@ def _normalize_database_url(database_url):
     if not username.startswith("postgres."):
         return normalized
 
-    project_ref = username.split(".", 1)[1].strip()
-    if not project_ref:
-        return normalized
-
     query = dict(url.query)
     query.setdefault("sslmode", "require")
-    direct_url = url.set(
-        host=f"db.{project_ref}.supabase.co",
+    session_pooler_url = url.set(
         port=5432,
-        username="postgres",
         query=query,
     )
-    return direct_url.render_as_string(hide_password=False)
+    return session_pooler_url.render_as_string(hide_password=False)
 
 
 def _database_uri():

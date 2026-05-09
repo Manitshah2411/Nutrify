@@ -164,7 +164,7 @@ def test_seed_database_resets_existing_master_admin_password_in_production():
     assert refreshed.is_locked is False
 
 
-def test_normalize_database_url_rewrites_supabase_pooler_connection():
+def test_normalize_database_url_rewrites_supabase_transaction_pooler_to_session_mode():
     database_url = (
         "postgresql://postgres.sjihztiqsookmakbxrk:secret-pass"
         "@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres"
@@ -172,7 +172,10 @@ def test_normalize_database_url_rewrites_supabase_pooler_connection():
 
     normalized = _normalize_database_url(database_url)
 
-    assert normalized.startswith("postgresql://postgres:secret-pass@db.sjihztiqsookmakbxrk.supabase.co:5432/postgres")
+    assert normalized.startswith(
+        "postgresql://postgres.sjihztiqsookmakbxrk:secret-pass"
+        "@aws-1-ap-northeast-2.pooler.supabase.com:5432/postgres"
+    )
     assert "sslmode=require" in normalized
 
 
